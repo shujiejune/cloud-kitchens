@@ -4,14 +4,87 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.example</groupId>
-    <artifactId>api-gateway</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <parent>
+        <groupId>org.example</groupId>
+        <artifactId>CloudKitchens</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
 
-    <properties>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    </properties>
+    <artifactId>api-gateway</artifactId>
+    <name>API Gateway — Spring Cloud Gateway</name>
+    <description>
+        Single ingress point for all client traffic.
+        Responsibilities:
+        1. JWT validation (Spring Security reactive filter).
+        2. Route definitions: /api/v1/auth/** → auth-service,
+        /api/v1/catalog/** → catalog-service, etc.
+        3. Service discovery via Eureka (lb:// URIs).
+        4. Rate limiting (Redis token bucket via RequestRateLimiter filter).
+        Uses WebFlux (reactive) — do NOT add spring-boot-starter-web here.
+        Runs on port 8080.
+    </description>
+
+    <dependencies>
+
+        <!-- Spring Cloud Gateway (reactive, non-blocking) -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-gateway</artifactId>
+        </dependency>
+
+        <!-- Eureka client — registers gateway and resolves lb:// URIs -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
+
+        <!-- Reactive Spring Security — JWT filter on the reactive stack -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!-- JJWT — parse and validate incoming JWT tokens -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+        </dependency>
+
+        <!-- Redis — token blocklist (logout) + rate limiting -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+        </dependency>
+
+        <!-- Actuator -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Micrometer + CloudWatch metrics export -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-cloudwatch2</artifactId>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
     
 </project>
