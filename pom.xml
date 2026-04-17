@@ -11,6 +11,7 @@
     <groupId>org.example</groupId>
     <artifactId>CloudKitchens</artifactId>
     <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
     <name>CloudKitchens</name>
     <description>
         CloudKitchens microservices monorepo.
@@ -49,7 +50,7 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <!-- Spring Cloud 2023.x is the BOM that matches Spring Boot 3.2 -->
+        <!-- Spring Cloud 2023.x is the BOM that matches Spring Boot 3.5.13 -->
         <spring-cloud.version>2023.0.1</spring-cloud.version>
 
         <!-- Dependency versions managed here, not repeated in children -->
