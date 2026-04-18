@@ -1,0 +1,556 @@
+# CloudKitchens Interview Preparation — Smart Procurement Optimizer
+**Full Story Script | Project 1 of 3**
+
+---
+
+> This document is your complete interview story for the CloudKitchens role (Sep 2023 – present). Read each section as a narrative script. Diagrams are in the companion visual file.
+
+---
+
+## TABLE OF CONTENTS
+
+1. High-Level Project Description
+2. Product Requirements Doc (PRD)
+3. Use Case Overview (see diagram)
+4. Architecture Overview (see diagram)
+5. Database Schema Design + ERD (see diagram)
+6. Sequence Diagram (see diagram)
+7. API Endpoints
+8. Testing Strategy
+9. Challenging Parts
+10. Production Support / Debugging Scenarios
+11. Deployment / PR Process
+12. Monitoring
+13. Scaling Strategy
+14. Agile Team & SDLC
+15. Traffic (TPS)
+
+---
+
+# SECTION 1 — HIGH-LEVEL PROJECT DESCRIPTION
+
+## Company Domain
+
+CloudKitchens is a Los Angeles-based company operating in the **ghost kitchen** (dark kitchen) industry. It provides:
+
+- **Kitchen Infrastructure**: Turnkey, shared commercial kitchen spaces that food operators rent without the overhead of a traditional restaurant. Operators produce delivery-only meals from these hubs.
+- **Software Platform**: A suite of SaaS tools covering order management, kitchen display systems, inventory tracking, and supplier procurement — all purpose-built for delivery-first food operators.
+- **Marketplace Access**: Integration with major delivery platforms (Uber Eats, DoorDash, Grubhub) so tenants can reach customers across channels from a single kitchen.
+
+CloudKitchens lowers the barrier to entry for food entrepreneurs by eliminating front-of-house costs and providing shared operational infrastructure with built-in software.
+
+## Who Are the Users?
+
+| User Type | Description |
+|---|---|
+| Kitchen Operators / Tenants | Food & beverage entrepreneurs or restaurant brands running delivery-only operations inside a CloudKitchens facility. |
+| Procurement Managers | Staff within larger operator companies responsible for ordering ingredients and supplies across multiple locations. |
+| CloudKitchens Internal Staff | Operations team members who monitor purchasing activity and negotiate vendor contracts. |
+
+## Customer Pain Points
+
+| Pain | Detail |
+|---|---|
+| Fragmented Purchasing | Operators must manually check Amazon, Walmart, Kroger, etc. separately for the same item — wasting hours weekly. |
+| Price Volatility | Grocery prices fluctuate frequently; operators overpay because they don't know a cheaper option existed at that moment. |
+| No Spend Visibility | Without a unified procurement system, operators have no central record of what they spent or whether they got a good deal. |
+| Manual Order Errors | Copy-pasting across vendor websites leads to wrong SKUs, quantities, and missed substitutions. |
+| Scaling Difficulty | As operators expand to multiple kitchen locations, coordinating purchasing manually becomes unsustainable. |
+
+## The Big Problem We Solve
+
+> **How can a food operator automatically find the cheapest combination of grocery purchases across multiple vendor platforms — and execute the order — without spending hours manually comparing prices?**
+
+## Core Feature Set: Smart Procurement Optimizer
+
+| Feature | Description |
+|---|---|
+| Ingredient Catalog | Operators maintain a standard list of items they regularly purchase. |
+| Multi-Vendor Price Fetch | The system queries Amazon, Walmart, and Kroger APIs in real time. |
+| Cost-Optimization Engine | Computes the globally cheapest vendor assignment per item. |
+| Purchase Plan Dashboard | React SPA showing the recommended plan, savings, and vendor breakdown. |
+| Order Submission | Operator confirms plan; system fans out orders to vendor APIs. |
+| Order History & Analytics | Past orders, spend trends, and total savings generated. |
+| Authentication & Multi-Tenancy | JWT-based login; data scoped to each operator's tenant. |
+
+---
+
+# SECTION 2 — PRODUCT REQUIREMENTS DOCUMENT
+
+## Developer Scenario
+
+**Team Composition:**
+
+| Role | Count |
+|---|---|
+| Full-Stack Engineers | 4 (including me) |
+| Backend Engineers | 2 |
+| QA Engineer | 1 |
+| DevOps Engineer | 1 |
+| Product Manager | 1 |
+| Tech Lead / Architect | 1 |
+| **Total** | **10** |
+
+I was a **Full-Stack Engineer** owning the Procurement Service (backend) and the Procurement Dashboard (React SPA frontend).
+
+**Team Goal:** Deliver a production-ready Smart Procurement Optimizer that reduces ingredient purchasing costs for CloudKitchens operators, within one business quarter.
+
+**Features:**
+1. Operator authentication (JWT-based)
+2. Ingredient catalog management (CRUD)
+3. Vendor price aggregation (Amazon, Walmart, Kroger)
+4. Cost optimization engine (cheapest vendor per item)
+5. Purchase plan dashboard (React)
+6. Order submission (vendor API fan-out)
+7. Order history and analytics
+
+**Constraints:**
+
+| Constraint | Detail |
+|---|---|
+| Deadline | 12-week delivery (3 sprints × 4 weeks) |
+| Scale Target | 500 concurrent operators at launch; designed for 5,000 |
+| Security | No PII shared between tenants; JWT expiry enforced |
+| Vendor API Rate Limits | Amazon: 1 req/sec; Walmart: 5 req/sec; Kroger: burst-sensitive |
+| Uptime SLA | 99.9% internal SLA |
+
+## Functional Requirements
+
+**FR-01: Authentication & Authorization**
+The system must allow operators to register and log in with email + password. On successful login, the system must issue a signed JWT (HS256, 24h expiry). All protected API endpoints must reject requests with missing or expired tokens. All data access must be scoped to the authenticated operator's tenant ID.
+
+**FR-02: Ingredient Catalog**
+Operators must be able to create, read, update, and delete catalog items. Each catalog item stores: name, category, unit of measure, preferred quantity. Bulk import via CSV upload must be supported.
+
+**FR-03: Vendor Price Aggregation**
+The system must query at least 3 vendor APIs for current prices. Price data must be refreshed on-demand when an operator requests a new plan. If a vendor API is unavailable, the system must gracefully degrade (exclude that vendor, surface a warning) without failing the entire plan generation.
+
+**FR-04: Cost Optimization Engine**
+Given a list of catalog items and current vendor prices, the engine must produce the cheapest vendor assignment per item. The plan must include total cost, per-vendor subtotals, and savings vs. single-vendor baseline. Plan generation must complete within 5 seconds for catalogs up to 200 items.
+
+**FR-05: Purchase Plan Dashboard**
+The React SPA must display the recommended plan in a clear tabular format. Operators must be able to override any item's assigned vendor before submitting. The dashboard must show a real-time savings summary.
+
+**FR-06: Order Submission**
+On operator confirmation, the system must fan out orders to the respective vendor APIs. Each sub-order's status must be tracked independently (pending / confirmed / failed). If a sub-order fails, the operator must be notified and offered a retry.
+
+**FR-07: Order History**
+The system must persist all submitted orders with line-item detail. Operators must be able to filter order history by date range, vendor, and item. Spend summary (total + savings last 30 days) must be exposed.
+
+## Non-Functional Requirements
+
+**Performance:**
+- API response time p95: < 200ms for CRUD operations
+- Purchase plan generation end-to-end: < 5 seconds
+- Dashboard page load (LCP): < 2 seconds
+- Database query time (indexed): < 50ms
+
+**Security:**
+- All communication over HTTPS (TLS 1.2+)
+- JWT stored in localStorage; attached as Authorization: Bearer header on all API calls
+- Passwords hashed with BCrypt (cost factor 12)
+- Spring Boot Security applied to all non-public endpoints
+- Input validation on all API inputs; parameterized queries / HQL to prevent injection
+- Tenant data isolation enforced at service layer
+
+**Availability:**
+- Uptime SLA: 99.9% (< 8.7 hours downtime/year)
+- RDS: Multi-AZ deployment for automatic failover
+- Eureka with health-check heartbeats (30s interval)
+- Resilience4j circuit breaker on all vendor API Feign clients
+
+**Scalability:**
+- Microservices independently deployable and scalable
+- Stateless services behind API Gateway; horizontal scaling via AWS ECS Auto Scaling
+- MongoDB sharded by operatorId for price snapshot collection
+- MySQL read replica for analytics queries
+
+## EQ Questions
+
+**Q: What was your team's responsibility?**
+"Our team owned the entire Smart Procurement Optimizer product — from requirements gathering and backend microservices to the React frontend and DevOps pipeline. We did not have a separate platform team; we owned our own infrastructure on AWS. The team followed Agile/Scrum with 2-week sprints and daily standups."
+
+**Q: What was your personal responsibility and work scope?**
+"I was a full-stack engineer. On the backend, I owned the Procurement Service — specifically the price aggregation layer, the optimization engine, and the order submission workflow. I built the Repository, Service, and Controller layers in Spring Boot, wrote HQL queries for MySQL order persistence, and integrated Feign clients to call vendor APIs through the gateway. On the frontend, I built the Purchase Plan Dashboard in React — components like the item table, vendor selector, savings summary card, and order confirmation modal — using TailwindCSS, React Router, and Axios for API calls. I also set up the CI/CD pipeline in Jenkins and Dockerized the services."
+
+**Q: Where did you get the requirements from?**
+"Requirements came from two main sources. First, the Product Manager synthesized input from internal CloudKitchens operations staff and feedback from early operator tenants about their procurement pain points. The PM wrote user stories in Jira, which we refined in sprint planning. Second, for technical constraints like vendor API rate limits and AWS budget caps, the Tech Lead worked directly with vendor API documentation and our infrastructure team. I participated in sprint planning and backlog grooming to clarify acceptance criteria, and I communicated directly with the PM when I found ambiguities during development."
+
+---
+
+# SECTION 3 — USE CASE DIAGRAM
+
+*(See the Use Case Diagram visual)*
+
+**Actors:**
+- **Operator** (primary user): Interacts with all system features — login, catalog management, plan generation, vendor override, order submission, order history, and analytics.
+- **Vendor APIs** (external systems — Amazon, Walmart, Kroger): Receive price queries from the Procurement Service (during plan generation) and receive order submissions from the Orders Service.
+
+**Use Cases by actor:**
+
+*Operator:*
+- Login / authenticate
+- Manage catalog items (CRUD + bulk import)
+- Generate purchase plan
+- Override vendor assignment
+- Submit order
+- View order history
+- View spend analytics
+
+*Vendor APIs (Amazon / Walmart / Kroger):*
+- Respond to price queries (interacts with "Generate purchase plan")
+- Receive and confirm sub-orders (interacts with "Submit order")
+
+---
+
+# SECTION 4 — ARCHITECTURE DIAGRAM
+
+*(See the Architecture Diagram visual)*
+
+**Request flow:**
+
+1. **React SPA** sends HTTPS request with JWT in the Authorization header.
+2. **API Gateway** (Spring Cloud Gateway) intercepts the request, validates the JWT via the Spring Boot Security filter, and routes to the appropriate microservice via Eureka service discovery.
+3. **Eureka Server** maintains a registry of all running service instances. The Gateway resolves the correct host:port dynamically, enabling load balancing and failover.
+4. The targeted **microservice** (Auth, Catalog, Procurement, or Orders) processes the request. Services communicate with each other via Feign clients (also routed through Eureka).
+5. **Vendor APIs** (Amazon, Walmart, Kroger) are called by the Procurement Service via Feign clients wrapped in Resilience4j circuit breakers.
+6. Data is persisted in **MySQL RDS** (structured relational data) and **MongoDB** (vendor price snapshots).
+7. The **CI/CD pipeline** (Jenkins + Docker + AWS ECS) manages building, testing, and deploying each service independently.
+
+**Security layers:**
+- TLS 1.2+ on all external traffic
+- JWT filter at the Gateway (short-circuits unauthorized requests before they reach services)
+- BCrypt password hashing in Auth Service
+- Tenant-scoped queries in every service (every DB query includes `operatorId` predicate)
+- Spring Boot Security annotations on controller methods
+
+**Tech stack:**
+- Java 17 (all Spring Boot services)
+- Spring Cloud (Gateway, Eureka, Feign Client)
+- React (JavaScript ES6, JSX, Redux, React Router Dom)
+- TailwindCSS 3, Axios
+- MySQL (AWS RDS), MongoDB
+- Hibernate HQL
+- Docker, Jenkins, AWS ECS
+- JUnit 5, Mockito
+- Apache Maven
+- Google Gson (Java object serialization)
+- Git, GitHub, Postman
+
+---
+
+# SECTION 5 — DATABASE SCHEMA & DESIGN
+
+*(See the ERD visual)*
+
+## Overview: Polyglot Persistence
+
+| Database | Engine | Purpose |
+|---|---|---|
+| MySQL (AWS RDS) | Relational / SQL | Operators, catalog items, orders, order line items — structured transactional data requiring ACID guarantees |
+| MongoDB | Document / NoSQL | Vendor price snapshots — schema-flexible, high-write, time-series documents that vary per vendor |
+
+## MySQL Tables
+
+**operators**: id (PK), email (UNIQUE), password_hash, company_name, status, created_at, updated_at. Index on email, status.
+
+**vendors**: id (PK), name, api_base_url, is_active.
+
+**catalog_items**: id (PK), operator_id (FK), name, category, unit, preferred_qty, created_at. Index on operator_id, composite (operator_id, category).
+
+**orders**: id (PK), operator_id (FK), status, total_cost, estimated_savings, submitted_at, created_at. Index on operator_id, (operator_id, submitted_at), status. Partition by submitted_at year for large datasets.
+
+**order_line_items**: id (PK), order_id (FK), catalog_item_id (FK), vendor_id (FK), quantity, unit_price, line_total, vendor_order_ref, sub_order_status. Index on order_id, vendor_id, catalog_item_id.
+
+## MongoDB Collection: price_snapshots
+
+Each document represents a vendor's response for one catalog item at one point in time. Key fields: operatorId, catalogItemId, vendorId, queriedAt, results (array of product hits), bestPrice, ttlExpiry. TTL index auto-deletes documents after 6 hours. Primary query index: { operatorId, catalogItemId, vendorId, queriedAt }.
+
+## SQL Design Considerations
+
+**ACID Guarantees**: MySQL InnoDB provides full ACID compliance. Order submission is wrapped in a single transaction — either all line items are persisted or none are.
+
+**Transactions and Isolation Levels**: Order submission uses the default REPEATABLE READ. Analytics reads on the read replica use READ COMMITTED. Each vendor sub-order status update runs as its own short transaction.
+
+**Index Design**: Covering index on (operator_id, submitted_at, status) for order history queries. All FK columns are indexed. No index on password_hash or api_base_url — never queried by value.
+
+**Sharding and Replication**: AWS RDS Multi-AZ provides synchronous replication to a standby replica. A separate read replica handles analytics queries.
+
+**Write & Read Separation**: Write path → primary RDS. Read path (analytics, order history list) → read replica via Spring DataSource routing.
+
+## NoSQL Design Considerations
+
+**Eventual Consistency**: Write concern w: majority; read preference primaryPreferred. Price snapshots accept slightly stale data (UI always shows queriedAt timestamp).
+
+**Sharding Keys**: Collection sharded by { operatorId, catalogItemId }. Co-locates all price data for one operator's plan generation on the same shard.
+
+**Query Access Patterns**: Primary pattern is "latest price snapshot per vendor per item for this operator's basket." Compound index covers this fully.
+
+**CAP Theorem Trade-offs**: Prioritizes CP (Consistency + Partition Tolerance) for writes (majority write concern). Accepts AP (Availability over strict Consistency) for reads — slightly stale price data is far better than an unavailable planning tool.
+
+---
+
+# SECTION 6 — SEQUENCE DIAGRAM
+
+*(See the Sequence Diagram visual)*
+
+## Happy Path Summary
+
+**Phase 1 — Authentication:**
+Operator posts credentials → Gateway forwards to Auth Service → BCrypt validation → JWT issued → stored in client localStorage.
+
+**Phase 2 — Generate Purchase Plan:**
+Operator requests plan with JWT → Gateway validates JWT → Procurement Service loads catalog from MySQL → fans out parallel Feign calls to Amazon, Walmart, Kroger (rate-controlled, circuit breakers) → saves price snapshots to MongoDB → runs optimization algorithm → returns plan with vendor assignments and savings estimate.
+
+**Phase 3 — Submit Order:**
+Operator confirms plan → Gateway → Procurement Service begins a MySQL transaction (INSERT orders + line items) → fans out sub-orders to each vendor API → each sub-order status tracked independently (CONFIRMED or FAILED) → UPDATE sub_order_status per line item → response returns orderId + statuses.
+
+## Payload Structure
+
+Plan request: `{ catalogItemIds: [1,2,3], refreshPrices: true }`
+
+Plan response: `{ planId, items: [{ catalogItemId, vendorName, unitPrice, qty, lineTotal }], totalCost, estimatedSavings }`
+
+Order response: `{ orderId, lineItems: [{ id, vendorOrderRef, subOrderStatus }] }`
+
+## Compensations and Retries
+
+If a vendor sub-order fails (HTTP 500 or timeout), the system marks that line item as FAILED in MySQL. The operator is notified on the dashboard. A retry endpoint (`POST /orders/{id}/retry/{lineItemId}`) re-attempts just that line item without re-running the full plan. If the overall MySQL transaction fails (network error during INSERT), a ROLLBACK ensures no partial order is created.
+
+## Observability
+
+Each request receives a Spring Cloud Sleuth `traceId` that propagates through all Feign client calls. Logs are searchable by traceId to reconstruct the complete call chain across all microservices.
+
+---
+
+# SECTION 7 — API ENDPOINTS
+
+All endpoints prefixed `/api/v1`. JWT required on all except `/auth/**`.
+
+**Auth Service (/auth)**
+
+| Method | Path | Description |
+|---|---|---|
+| POST | /auth/register | Register new operator |
+| POST | /auth/login | Login, returns JWT |
+| POST | /auth/logout | Clear token (client-side) |
+
+**Catalog Service (/catalog)**
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /catalog/items | List all operator catalog items |
+| POST | /catalog/items | Create new catalog item |
+| GET | /catalog/items/{id} | Get single catalog item |
+| PUT | /catalog/items/{id} | Update catalog item |
+| DELETE | /catalog/items/{id} | Delete catalog item |
+| POST | /catalog/items/bulk | Bulk import from CSV |
+
+**Procurement Service (/procurement)**
+
+| Method | Path | Description |
+|---|---|---|
+| POST | /procurement/plan | Generate purchase plan |
+| GET | /procurement/plan/{planId} | Get a previously generated plan |
+| PUT | /procurement/plan/{planId}/override | Override vendor for a line item |
+| POST | /procurement/plan/{planId}/submit | Submit order (fan-out to vendors) |
+
+**Orders Service (/orders)**
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /orders | List order history (paginated, filterable) |
+| GET | /orders/{id} | Get order detail with all line items |
+| GET | /orders/{id}/status | Get live sub-order statuses |
+| POST | /orders/{id}/retry/{lineItemId} | Retry a failed sub-order |
+
+**Analytics Service (/analytics)**
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /analytics/spend-summary | Total spend + savings (30/90 days) |
+| GET | /analytics/spend-by-vendor | Spend breakdown per vendor |
+| GET | /analytics/price-trends/{itemId} | Price history for a catalog item |
+
+---
+
+# SECTION 8 — TESTING STRATEGY
+
+## Unit Testing (JUnit 5 + Mockito)
+Scope: Service layer logic — optimization engine, price comparison calculations, JWT token validation, order total computation. All Repository dependencies mocked with Mockito. Tests cover edge cases: empty vendor results, single-vendor fallback, zero-item catalog, expired JWT. Coverage target: 80%+ line coverage on Service and utility classes.
+
+## Integration Testing (Spring Boot Test + H2)
+Scope: Controller → Service → Repository stack. Uses @SpringBootTest with an embedded H2 database. Tests the full HTTP request-response cycle via MockMvc. Verifies unauthorized requests return 401 and that tenant isolation works (operator A cannot see operator B's data).
+
+## API Testing (Postman + Newman)
+A Postman collection covers all endpoints with sample payloads. Newman (Postman CLI) runs the collection in the Jenkins CI pipeline on every PR merge to main. Tests cover: login flow, full plan-generate-submit cycle, order history retrieval.
+
+## Contract Testing (Wiremock)
+Feign client interfaces are tested with Wiremock stubs simulating vendor API responses, including error cases (500, timeout, rate limit 429).
+
+## Frontend Testing (React Testing Library)
+Unit tests for reusable UI components (Autocomplete, Button, Spinner, ItemTable). Snapshot tests to catch unintended rendering regressions. Mocked Axios calls for dashboard data-fetching hooks.
+
+---
+
+# SECTION 9 — CHALLENGING PARTS
+
+## Challenge 1: Vendor API Rate Limiting & Partial Failure Handling
+
+**Problem**: The three vendor APIs have different rate limits (Amazon: 1 req/sec, Walmart: 5 req/sec, Kroger: burst-sensitive). For a catalog of 100+ items, naively calling each vendor sequentially is too slow (exceeding 100 seconds). Calling them all in parallel risks HTTP 429 rate limit errors.
+
+**Solution**: I implemented a per-vendor request queue with configurable throttle rates using a Semaphore-based token bucket per vendor Feign client. Calls to each vendor were batched and rate-controlled independently. For partial failures, I used Resilience4j's circuit breaker on each Feign client — if a vendor returned 3 consecutive failures, the circuit opened for 30 seconds, that vendor was excluded from the plan, and the UI displayed a warning banner. This preserved plan generation for the available vendors.
+
+## Challenge 2: Optimization Engine Correctness vs. Performance
+
+**Problem**: The cost-optimization problem sounds simple (always pick cheapest per item) but has subtleties: some vendors have minimum order values, some items may be unavailable at a given vendor, and some operators want to minimize the number of vendors (fewer invoices) even at slightly higher cost.
+
+**Solution**: I modeled the plan generation as a constrained assignment problem. For the MVP, we implemented a greedy algorithm with a post-processing consolidation step: if switching one item from its cheapest vendor to the second-cheapest reduces total vendor count by 1 and the cost delta is less than $5, we consolidate. This was validated against test fixture catalogs and gave results operators found intuitive. We documented the algorithm so future iterations could swap in a proper LP solver if needed.
+
+---
+
+# SECTION 10 — PRODUCTION SUPPORT / DEBUGGING SCENARIOS
+
+## Scenario 1: Plan Generation Silently Returns Stale Prices
+
+**Symptom**: An operator reports that the generated plan showed a price from yesterday for a Kroger item, even after requesting a fresh plan.
+
+**Root Cause**: MongoDB's TTL index background task runs every 60 seconds, so expired snapshots could persist briefly. More critically, the Kroger API was returning HTTP 200 with an empty body, which our deserialization treated as "no results" rather than an error. The system then fell back to the cached snapshot (past TTL but not yet physically deleted).
+
+**Fix**: Added an explicit staleness check in the Procurement Service — if the most recent snapshot's queriedAt is older than 5 minutes, force a re-fetch regardless of TTL. Added validation in the Kroger Feign client decoder: empty body throws a typed VendorEmptyResponseException (counted as a failure by the circuit breaker). Added a CloudWatch metric on cache hit vs. cache miss ratio to alert when abnormally high.
+
+## Scenario 2: JWT Token Accepted After User Logout
+
+**Symptom**: Security audit revealed that after an operator clicked Logout, their JWT remained valid until its 24-hour expiry — a stolen token could be replayed.
+
+**Root Cause**: JWTs are stateless — the server has no record of issued tokens. "Logout" only cleared the client-side localStorage.
+
+**Fix**: Implemented a Redis-backed token blocklist. On logout, the JWT's jti (JWT ID claim) is stored in Redis with a TTL equal to the token's remaining lifetime. The Spring Security filter checks this blocklist on every request. This adds one Redis lookup per request (approximately 1ms) — acceptable latency overhead.
+
+---
+
+# SECTION 11 — DEPLOYMENT / PR PROCESS
+
+## Git Workflow
+Branching: `main` (production) → `develop` (integration) → feature branches (e.g. `feature/JIRA-123-plan-generation`). PR requirements: at least 1 peer review approval + all CI checks green before merge to develop. Release: `develop` → `main` weekly via a release PR reviewed by the Tech Lead.
+
+## CI/CD Pipeline (Jenkins)
+1. Git push triggers Jenkins
+2. Build: `mvn clean package` (Java), `npm run build` (React)
+3. Unit tests: `mvn test`, `npm test`
+4. Integration tests: H2-backed Spring Boot tests
+5. Postman/Newman: API contract tests
+6. Docker build: `docker build -t cloudkitchens/service-name:${GIT_SHA}`
+7. Docker push to ECR registry
+8. Deploy to Staging: ECS task definition update
+9. Smoke tests: health check endpoints
+10. Manual gate: PM/QA approval for production deploy
+11. Deploy to Production: ECS rolling update (zero downtime)
+
+## Zero-Downtime Deployment
+ECS rolling updates replace one task at a time, keeping minimum 50% healthy. ALB health checks ensure traffic only routes to healthy tasks. Rollback: re-deploy previous ECR image tag.
+
+---
+
+# SECTION 12 — MONITORING
+
+## Metrics (AWS CloudWatch + Spring Boot Actuator)
+
+| Metric | Alert Threshold |
+|---|---|
+| API p95 response time | > 500ms → PagerDuty alert |
+| Error rate (5xx) | > 1% over 5 min → PagerDuty |
+| Vendor API circuit breaker OPEN | Immediate Slack alert |
+| RDS CPU utilization | > 80% for 5 min → warning |
+| MongoDB op latency (p99) | > 200ms → warning |
+| ECS task health | Any task unhealthy → alert |
+| JVM heap usage | > 85% → alert |
+
+## Logs (AWS CloudWatch Logs)
+Structured JSON logging via Logback. Every request logged with: requestId, operatorId, endpoint, latencyMs, statusCode. Log levels: ERROR for unhandled exceptions, WARN for circuit breaker events, INFO for order submissions, DEBUG disabled in production.
+
+## Distributed Tracing
+Spring Cloud Sleuth adds traceId and spanId to every request, propagated through all Feign client calls between microservices. Logs are searchable by traceId to reconstruct the full call chain.
+
+## Health Checks
+Each Spring Boot service exposes `/actuator/health`. Eureka uses this endpoint for service registration health. ALB target group health check hits it every 30 seconds.
+
+---
+
+# SECTION 13 — SCALING STRATEGY
+
+**step 1 — vertical scaling**: right-size ecs task cpu/memory based on observed utilization. upgrade rds instance class if db cpu is the bottleneck.
+
+**step 2 — horizontal scaling (services)**: stateless spring boot services scale horizontally. ecs auto scaling: add tasks when average cpu > 70% for 2 consecutive minutes; remove when < 30%. eureka auto-discovers new instances.
+
+**step 3 — database read scaling**: add rds read replicas for the analytics service. route all read-heavy queries to read replicas via spring's abstractroutingdatasource.
+
+**step 4 — caching layer**: add redis (elasticache) in front of price snapshot lookup. cache operator catalog items in redis (ttl 5 min) to reduce mysql reads on every plan generation.
+
+**step 5 — vendor api fan-out parallelism**: move vendor api calls from synchronous request-scoped threads to an async task queue (spring @async with a bounded thread pool, or aws sqs for full decoupling).
+
+**step 6 — event-driven order submission**: replace synchronous order fan-out with sqs-based event-driven flow — one ordersubmitted event per line item; per-vendor consumers process at their own rate, retry on failure, update status via callback.
+
+**step 7 — multi-region (future)**: deploy to a second aws region (us-east-1 mirror) with rds global database for < 1 second replication lag. route traffic via route 53 latency-based routing.
+
+---
+
+# SECTION 14 — AGILE TEAM STRUCTURE & SDLC
+
+## Team Structure
+
+| Role | Count | Responsibility |
+|---|---|---|
+| Product Manager | 1 | Requirements, prioritization, stakeholder communication |
+| Tech Lead / Architect | 1 | System design, code reviews, technical decisions |
+| Full-Stack Engineers | 4 | Feature development (FE + BE), owns services end-to-end |
+| Backend Engineers | 2 | Optimization engine, data pipeline, Feign integrations |
+| QA Engineer | 1 | Test cases, API testing (Postman/Newman), regression |
+| DevOps Engineer | 1 | Jenkins CI/CD, AWS infrastructure, Docker, monitoring |
+
+## Sprint Structure (2-Week Sprints)
+
+| Activity | Timing | Duration |
+|---|---|---|
+| Sprint Planning | Monday, Sprint Day 1 | 2 hours |
+| Daily Standup | Every weekday, 9:30am | 15 minutes |
+| Mid-Sprint Sync | Wednesday, Sprint Day 6 | 30 minutes |
+| Sprint Review / Demo | Friday, Sprint Day 10 | 1 hour |
+| Sprint Retrospective | Friday, Sprint Day 10 | 45 minutes |
+| Backlog Grooming | Wednesday, Sprint Day 8 | 1 hour |
+
+## Standup Format
+- What I completed yesterday
+- What I'm working on today
+- Any blockers (dependency on another service, unclear requirement, vendor API access)
+
+## Definition of Done
+- Code reviewed and approved (1+ approval)
+- Unit tests written and passing
+- Integration tests passing in CI
+- PM has verified acceptance criteria in staging
+- No open Sev1/Sev2 bugs on the feature
+
+---
+
+# SECTION 15 — TRAFFIC (TRANSACTIONS PER SECOND)
+
+## Observed Traffic at Launch (500 active operators)
+
+| Endpoint Category | Estimated TPS | Notes |
+|---|---|---|
+| Auth (login/token refresh) | ~5 TPS | Morning peak as operators start their day |
+| Plan generation | ~2 TPS | Each triggers multiple vendor API calls |
+| Order submission | ~1 TPS | Typically done after plan review |
+| Order history / analytics reads | ~10 TPS | Dashboard polling, report views |
+| Catalog CRUD | ~3 TPS | Less frequent, mainly during onboarding |
+| **Total peak** | **~20 TPS** | With 500 active operators |
+
+## Scale Target
+- Designed for **200 TPS** peak with current architecture (horizontal service scaling + read replicas).
+- Beyond 200 TPS: introduce SQS-based async vendor fan-out and Redis caching to reach ~1,000 TPS without schema changes.
+- The vendor API rate limits (Amazon: 1 req/sec per credential set) are the actual bottleneck at scale — solved by maintaining a pool of API credentials and distributing load across them.
+
+---
+
+*End of CloudKitchens Project Story — Project 1 of 3*

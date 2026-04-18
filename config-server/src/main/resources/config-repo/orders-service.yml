@@ -1,0 +1,13 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: orders-service
+  datasource:
+    url: jdbc:mysql://localhost:3307/cloudkitchens_db?useSSL=false
+    username: root
+    password: yourpassword
+  jpa:
+    hibernate:
+      ddl-auto: update

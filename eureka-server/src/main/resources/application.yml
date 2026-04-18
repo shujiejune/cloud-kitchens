@@ -1,11 +1,10 @@
-server:
-  port: 8761 # 8761 is the standard default port for Eureka
-
 spring:
   application:
     name: eureka-server
+  config:
+    import: optional:configserver:http://localhost:8888
 
 eureka:
   client:
-    register-with-eureka: false # I am the server, don't register me
-    fetch-registry: false       # I am the server, I don't need to download the phonebook
+    service-url:
+      defaultZone: http://localhost:8761/eureka/

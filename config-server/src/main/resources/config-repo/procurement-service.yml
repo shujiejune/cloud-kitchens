@@ -1,0 +1,27 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: procurement-service
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/cloudkitchens_procurement
+
+# Resilience4j Circuit Breaker Config for Feign Clients
+resilience4j:
+  circuitbreaker:
+    instances:
+      amazonClient:
+        slidingWindowSize: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30000ms # 30 seconds
+        permittedNumberOfCallsInHalfOpenState: 2
+      walmartClient:
+        slidingWindowSize: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30000ms
+      krogerClient:
+        slidingWindowSize: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30000ms

@@ -1,0 +1,31 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+      routes:
+        - id: auth-service
+          uri: lb://AUTH-SERVICE
+          predicates:
+            - Path=/api/v1/auth/**
+        - id: catalog-service
+          uri: lb://CATALOG-SERVICE
+          predicates:
+            - Path=/api/v1/catalog/**
+        - id: procurement-service
+          uri: lb://PROCUREMENT-SERVICE
+          predicates:
+            - Path=/api/v1/procurement/**
+        - id: orders-service
+          uri: lb://ORDERS-SERVICE
+          predicates:
+            - Path=/api/v1/orders/**
+
+jwt:
+  secret: your-256-bit-secret-key-for-validating-tokens

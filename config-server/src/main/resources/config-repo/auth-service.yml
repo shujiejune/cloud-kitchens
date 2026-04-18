@@ -1,0 +1,17 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: jdbc:mysql://localhost:3307/cloudkitchens_db?useSSL=false
+    username: root
+    password: yourpassword
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+jwt:
+  secret: your-256-bit-secret-key-for-validating-tokens
+  expiration: 86400000 # 24 hours in ms
