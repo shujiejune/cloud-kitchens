@@ -1,0 +1,11 @@
+server:
+  port: 8761 # 8761 is the standard default port for Eureka
+
+spring:
+  application:
+    name: eureka-server
+
+eureka:
+  client:
+    register-with-eureka: false # I am the server, don't register me
+    fetch-registry: false       # I am the server, I don't need to download the phonebook
