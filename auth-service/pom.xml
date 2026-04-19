@@ -32,6 +32,12 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Spring Security — method-level @PreAuthorize, BCrypt -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
