@@ -38,6 +38,12 @@
             <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
         </dependency>
 
+        <!-- Config client — required for spring.config.import=configserver:... to resolve -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-config</artifactId>
+        </dependency>
+
         <!-- Reactive Spring Security — JWT filter on the reactive stack -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -21,7 +21,7 @@ import java.util.UUID;
  * Encapsulates all JWT operations using JJWT 0.12.
  *
  * Algorithm : HS256 (HMAC-SHA-256)
- * Expiry     : 24 hours (configurable via app.jwt.expiration-hours)
+ * Expiry     : 24 hours (configurable via jwt.expiration, in milliseconds)
  * Claims     : sub=operatorId (String), email, jti=UUID
  *
  * The secret key is read from application.yml — must be at least
@@ -32,13 +32,13 @@ import java.util.UUID;
 public class JwtService {
 
     private final SecretKey secretKey;
-    private final long expirationHours;
+    private final long expirationMs;
 
     public JwtService(
-            @Value("${app.jwt.secret}") String secret,
-            @Value("${app.jwt.expiration-hours:24}") long expirationHours) {
-        this.secretKey     = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
-        this.expirationHours = expirationHours;
+            @Value("${jwt.secret}") String secret,
+            @Value("${jwt.expiration:86400000}") long expirationMs) {
+        this.secretKey    = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        this.expirationMs = expirationMs;
     }
 
     // ----------------------------------------------------------------
@@ -51,7 +51,7 @@ public class JwtService {
      */
     public String generateToken(Operator operator) {
         Instant now    = Instant.now();
-        Instant expiry = now.plusSeconds(expirationHours * 3600);
+        Instant expiry = now.plusMillis(expirationMs);
 
         return Jwts.builder()
                 .subject(String.valueOf(operator.getId()))
