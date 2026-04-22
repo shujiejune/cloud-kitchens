@@ -9,3 +9,12 @@ eureka:
   client:
     register-with-eureka: false # I am the server, don't register me
     fetch-registry: false       # I am the server, I don't need to download the phonebook
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
