@@ -4,6 +4,13 @@ server:
 spring:
   application:
     name: procurement-service
+  datasource:
+    url: jdbc:mysql://localhost:3307/cloudkitchens_db?useSSL=false
+    username: root
+    password: yourpassword
+  jpa:
+    hibernate:
+      ddl-auto: update
   data:
     mongodb:
       uri: mongodb://localhost:27017/cloudkitchens_procurement
@@ -25,3 +32,14 @@ resilience4j:
         slidingWindowSize: 5
         failureRateThreshold: 50
         waitDurationInOpenState: 30000ms
+
+# Vendor API base URLs — referenced by @FeignClient(url=...) in VendorApiClients.
+# TODO: replace these PLACEHOLDER hostnames with the real vendor endpoints
+#       (or per-environment URLs via Spring profiles) before hitting prod.
+vendor:
+  amazon:
+    api-base-url: https://api.amazon.example.com    # PLACEHOLDER
+  walmart:
+    api-base-url: https://api.walmart.example.com   # PLACEHOLDER
+  kroger:
+    api-base-url: https://api.kroger.example.com    # PLACEHOLDER

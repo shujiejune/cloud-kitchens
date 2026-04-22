@@ -10,4 +10,4 @@ spring:
     password: yourpassword
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: none
