@@ -1,4 +1,4 @@
-package org.example.procurementservice.entity;
+package org.example.procurementservice.document;
 
 import lombok.*;
 import org.springframework.data.annotation.Id;

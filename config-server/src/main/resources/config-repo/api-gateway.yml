@@ -26,6 +26,10 @@ spring:
           uri: lb://ORDERS-SERVICE
           predicates:
             - Path=/api/v1/orders/**
+        - id: orders-analytics
+          uri: lb://ORDERS-SERVICE
+          predicates:
+            - Path=/api/v1/analytics/**
 
 jwt:
   secret: your-256-bit-secret-key-for-validating-tokens
