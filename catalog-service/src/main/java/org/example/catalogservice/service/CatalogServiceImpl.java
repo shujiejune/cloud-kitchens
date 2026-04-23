@@ -7,6 +7,7 @@ import org.example.catalogservice.dto.CatalogItemResponse;
 import org.example.catalogservice.entity.CatalogItem;
 import org.example.catalogservice.exception.ResourceNotFoundException;
 import org.example.catalogservice.dao.CatalogItemDAO;
+import org.example.catalogservice.mapper.CatalogItemMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.csv.CSVFormat;
@@ -29,6 +30,7 @@ import java.util.List;
 public class CatalogServiceImpl implements CatalogService {
 
     private final CatalogItemDAO catalogItemDAO;
+    private final CatalogItemMapper catalogItemMapper;
 
     // ----------------------------------------------------------------
     // findAll
@@ -39,7 +41,7 @@ public class CatalogServiceImpl implements CatalogService {
     public List<CatalogItemResponse> findAll(Long operatorId) {
         return catalogItemDAO.findAllByOperatorId(operatorId)
                 .stream()
-                .map(this::toResponse)
+                .map(catalogItemMapper::toResponse)
                 .toList();
     }
 
@@ -50,7 +52,7 @@ public class CatalogServiceImpl implements CatalogService {
     @Override
     @Transactional(readOnly = true)
     public CatalogItemResponse findById(Long id, Long operatorId) {
-        return toResponse(findOwnedOrThrow(id, operatorId));
+        return catalogItemMapper.toResponse(findOwnedOrThrow(id, operatorId));
     }
 
     // ----------------------------------------------------------------
@@ -60,14 +62,9 @@ public class CatalogServiceImpl implements CatalogService {
     @Override
     @Transactional
     public CatalogItemResponse create(CatalogItemRequest request, Long operatorId) {
-        CatalogItem item = CatalogItem.builder()
-                .operatorId(operatorId)
-                .name(request.name())
-                .category(request.category())
-                .unit(request.unit())
-                .preferredQty(request.preferredQty())
-                .build();
-        return toResponse(catalogItemDAO.save(item));
+        CatalogItem item = catalogItemMapper.toEntity(request);
+        item.setOperatorId(operatorId);
+        return catalogItemMapper.toResponse(catalogItemDAO.save(item));
     }
 
     // ----------------------------------------------------------------
@@ -78,11 +75,8 @@ public class CatalogServiceImpl implements CatalogService {
     @Transactional
     public CatalogItemResponse update(Long id, CatalogItemRequest request, Long operatorId) {
         CatalogItem item = findOwnedOrThrow(id, operatorId);
-        item.setName(request.name());
-        item.setCategory(request.category());
-        item.setUnit(request.unit());
-        item.setPreferredQty(request.preferredQty());
-        return toResponse(catalogItemDAO.save(item));
+        catalogItemMapper.updateFromRequest(request, item);
+        return catalogItemMapper.toResponse(catalogItemDAO.save(item));
     }
 
     // ----------------------------------------------------------------
@@ -194,7 +188,7 @@ public class CatalogServiceImpl implements CatalogService {
     public List<CatalogItemResponse> findByIds(List<Long> ids, Long operatorId) {
         return catalogItemDAO.findByIdInAndOperatorId(ids, operatorId)
                 .stream()
-                .map(this::toResponse)
+                .map(catalogItemMapper::toResponse)
                 .toList();
     }
 
@@ -208,14 +202,4 @@ public class CatalogServiceImpl implements CatalogService {
                         "Catalog item not found: id=" + id));
     }
 
-    private CatalogItemResponse toResponse(CatalogItem item) {
-        return new CatalogItemResponse(
-                item.getId(),
-                item.getOperatorId(),
-                item.getName(),
-                item.getCategory(),
-                item.getUnit(),
-                item.getPreferredQty(),
-                item.getCreatedAt());
-    }
 }

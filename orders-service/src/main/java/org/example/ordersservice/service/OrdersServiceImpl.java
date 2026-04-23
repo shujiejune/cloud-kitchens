@@ -20,6 +20,7 @@ import org.example.ordersservice.exception.CatalogLookupException;
 import org.example.ordersservice.exception.LineItemNotFoundException;
 import org.example.ordersservice.exception.OrderNotFoundException;
 import org.example.ordersservice.exception.ProcurementRetryFailedException;
+import org.example.ordersservice.mapper.OrderMapper;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -50,6 +51,7 @@ public class OrdersServiceImpl implements OrdersService {
     private final VendorViewDAO vendorViewDAO;
     private final CatalogClient catalogClient;
     private final ProcurementRetryClient procurementRetryClient;
+    private final OrderMapper orderMapper;
 
     // ----------------------------------------------------------------
     // Public API
@@ -67,7 +69,7 @@ public class OrdersServiceImpl implements OrdersService {
                         filter.vendorId(), filter.catalogItemId(), pageable)
                 : orderViewDAO.findAllByOperatorId(operatorId, pageable);
 
-        return PagedResponse.of(page.map(this::toSummary));
+        return PagedResponse.of(page.map(orderMapper::toSummary));
     }
 
     @Override
@@ -129,24 +131,13 @@ public class OrdersServiceImpl implements OrdersService {
     }
 
     // ----------------------------------------------------------------
-    // Private mapping helpers (hand-coded — see auth/catalog convention)
+    // Private helpers
     // ----------------------------------------------------------------
-
-    /** Projects an OrderView into the lightweight history-list summary. */
-    private OrderSummaryResponse toSummary(OrderView orderView) {
-        return new OrderSummaryResponse(
-                orderView.getId(),
-                orderView.getStatus(),
-                orderView.getTotalCost(),
-                orderView.getEstimatedSavings(),
-                orderView.getSubmittedAt(),
-                orderView.getLineItems().size());
-    }
 
     private OrderResponse toResponse(OrderView orderView, List<OrderLineItemView> lineItems,
             Map<Long, String> catalogNamesById, Map<Long, String> vendorNamesById) {
         List<OrderResponse.LineItemResponse> itemResponses = lineItems.stream()
-                .map(li -> toLineResponse(li,
+                .map(li -> orderMapper.toLineResponse(li,
                         catalogNamesById.getOrDefault(li.getCatalogItemId(), null),
                         vendorNamesById.getOrDefault(li.getVendorId(), null)))
                 .toList();
@@ -160,22 +151,6 @@ public class OrdersServiceImpl implements OrdersService {
                 orderView.getSubmittedAt(),
                 orderView.getCreatedAt(),
                 itemResponses);
-    }
-
-    /** Projects a single OrderLineItemView into the nested LineItemResponse. */
-    private OrderResponse.LineItemResponse toLineResponse(
-            OrderLineItemView lineItem, String catalogItemName, String vendorName) {
-        return new OrderResponse.LineItemResponse(
-                lineItem.getId(),
-                lineItem.getCatalogItemId(),
-                catalogItemName,
-                lineItem.getVendorId(),
-                vendorName,
-                lineItem.getQuantity(),
-                lineItem.getUnitPrice(),
-                lineItem.getLineTotal(),
-                lineItem.getSubOrderStatus(),
-                lineItem.getVendorOrderRef());
     }
 
     /**

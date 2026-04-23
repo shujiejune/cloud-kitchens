@@ -10,7 +10,6 @@ import org.example.procurementservice.dao.mongo.PlanDAO;
 import org.example.procurementservice.dao.mongo.PriceSnapshotDAO;
 import org.example.procurementservice.document.Plan;
 import org.example.procurementservice.document.Plan.PlanItem;
-import org.example.procurementservice.document.Plan.VendorSubtotalSnapshot;
 import org.example.procurementservice.document.PriceSnapshot;
 import org.example.procurementservice.document.PriceSnapshot.VendorProductResult;
 import org.example.procurementservice.dto.GeneratePlanRequest;
@@ -36,6 +35,8 @@ import org.example.procurementservice.exception.StalePriceSnapshotException;
 import org.example.procurementservice.exception.SubOrderRetryNotAllowedException;
 import org.example.procurementservice.exception.VendorNotFoundException;
 import org.example.procurementservice.exception.VendorUnavailableException;
+import org.example.procurementservice.mapper.PlanMapper;
+import org.example.procurementservice.mapper.VendorMapper;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -89,6 +90,8 @@ public class ProcurementServiceImpl implements ProcurementService {
     private final OptimizerService optimizerService;
     private final VendorOrderFanOutService vendorOrderFanOutService;
     private final TransactionTemplate transactionTemplate;
+    private final VendorMapper vendorMapper;
+    private final PlanMapper planMapper;
 
     public ProcurementServiceImpl(CatalogClient catalogClient,
                                   VendorDAO vendorDAO,
@@ -99,7 +102,9 @@ public class ProcurementServiceImpl implements ProcurementService {
                                   PriceAggregator priceAggregator,
                                   OptimizerService optimizerService,
                                   VendorOrderFanOutService vendorOrderFanOutService,
-                                  PlatformTransactionManager transactionManager) {
+                                  PlatformTransactionManager transactionManager,
+                                  VendorMapper vendorMapper,
+                                  PlanMapper planMapper) {
         this.catalogClient = catalogClient;
         this.vendorDAO = vendorDAO;
         this.orderDAO = orderDAO;
@@ -110,6 +115,8 @@ public class ProcurementServiceImpl implements ProcurementService {
         this.optimizerService = optimizerService;
         this.vendorOrderFanOutService = vendorOrderFanOutService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.vendorMapper = vendorMapper;
+        this.planMapper = planMapper;
     }
 
     // ================================================================
@@ -177,7 +184,7 @@ public class ProcurementServiceImpl implements ProcurementService {
                 .build();
         planDAO.save(plan);
 
-        return toResponse(plan);
+        return planMapper.toResponse(plan);
     }
 
     // ================================================================
@@ -188,7 +195,7 @@ public class ProcurementServiceImpl implements ProcurementService {
     public PurchasePlanResponse getPlan(Long operatorId, String planId) {
         Plan plan = planDAO.findByIdAndOperatorId(planId, operatorId)
                 .orElseThrow(() -> new PlanNotFoundException("Plan not found: " + planId));
-        return toResponse(plan);
+        return planMapper.toResponse(plan);
     }
 
     // ================================================================
@@ -241,7 +248,7 @@ public class ProcurementServiceImpl implements ProcurementService {
         optimizerService.recomputeTotals(plan);
         planDAO.save(plan);
 
-        return toResponse(plan);
+        return planMapper.toResponse(plan);
     }
 
     // ================================================================
@@ -402,7 +409,7 @@ public class ProcurementServiceImpl implements ProcurementService {
     @Transactional(readOnly = true)
     public List<VendorResponse> listVendors() {
         return vendorDAO.findAll(Sort.by("name")).stream()
-                .map(this::toResponse)
+                .map(vendorMapper::toResponse)
                 .toList();
     }
 
@@ -440,51 +447,4 @@ public class ProcurementServiceImpl implements ProcurementService {
         }
     }
 
-    // ================================================================
-    // Mapping helpers
-    // ================================================================
-
-    private PurchasePlanResponse toResponse(Plan plan) {
-        List<PurchasePlanResponse.PlanLineItem> items = plan.getItems() == null
-                ? List.of()
-                : plan.getItems().stream()
-                        .map(pi -> new PurchasePlanResponse.PlanLineItem(
-                                pi.getCatalogItemId(),
-                                pi.getItemName(),
-                                pi.getUnit(),
-                                pi.getQuantity(),
-                                pi.getVendorId(),
-                                pi.getVendorName(),
-                                pi.getVendorSku(),
-                                pi.getProductName(),
-                                pi.getUnitPrice(),
-                                pi.getLineTotal(),
-                                pi.getVendorProductUrl(),
-                                pi.isOverridden()))
-                        .toList();
-
-        List<PurchasePlanResponse.VendorSubtotal> subtotals = plan.getVendorSubtotals() == null
-                ? List.of()
-                : plan.getVendorSubtotals().stream()
-                        .map(this::toSubtotal)
-                        .toList();
-
-        return new PurchasePlanResponse(
-                plan.getId(),
-                items,
-                plan.getTotalCost(),
-                plan.getEstimatedSavings(),
-                subtotals,
-                plan.getVendorWarnings() == null ? List.of() : plan.getVendorWarnings(),
-                plan.getGeneratedAt());
-    }
-
-    private PurchasePlanResponse.VendorSubtotal toSubtotal(VendorSubtotalSnapshot s) {
-        return new PurchasePlanResponse.VendorSubtotal(
-                s.getVendorId(), s.getVendorName(), s.getItemCount(), s.getSubtotal());
-    }
-
-    private VendorResponse toResponse(Vendor vendor) {
-        return new VendorResponse(vendor.getId(), vendor.getName(), vendor.isActive());
-    }
 }

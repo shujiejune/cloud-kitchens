@@ -9,6 +9,7 @@ import org.example.authservice.exception.AccountSuspendedException;
 import org.example.authservice.exception.DuplicateEmailException;
 import org.example.authservice.exception.InvalidCredentialsException;
 import org.example.authservice.dao.OperatorDAO;
+import org.example.authservice.mapper.AuthMapper;
 import org.example.authservice.security.JwtService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +39,7 @@ public class AuthServiceImpl implements AuthService {
     private final JwtService jwtService;
     private final BCryptPasswordEncoder passwordEncoder;
     private final StringRedisTemplate redisTemplate;
+    private final AuthMapper authMapper;
 
     // Redis key prefix for the JWT blocklist
     private static final String BLOCKLIST_PREFIX = "jwt:blocklist:";
@@ -123,7 +125,7 @@ public class AuthServiceImpl implements AuthService {
     public OperatorResponse getCurrentOperator(Long operatorId) {
         Operator op = operatorDAO.findById(operatorId)
                 .orElseThrow(() -> new InvalidCredentialsException("Operator not found."));
-        return toResponse(op);
+        return authMapper.toResponse(op);
     }
 
     // ----------------------------------------------------------------
@@ -135,14 +137,5 @@ public class AuthServiceImpl implements AuthService {
         LocalDateTime expiresAt = jwtService.getExpiresAt(token);
         return AuthResponse.of(token, expiresAt,
                 operator.getId(), operator.getEmail(), operator.getCompanyName());
-    }
-
-    private OperatorResponse toResponse(Operator op) {
-        return new OperatorResponse(
-                op.getId(),
-                op.getEmail(),
-                op.getCompanyName(),
-                op.getStatus().name(),
-                op.getCreatedAt());
     }
 }

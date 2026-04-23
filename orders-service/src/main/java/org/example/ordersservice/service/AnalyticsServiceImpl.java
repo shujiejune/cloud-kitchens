@@ -6,6 +6,7 @@ import org.example.ordersservice.dao.OrderLineItemViewDAO;
 import org.example.ordersservice.dto.PriceTrendPoint;
 import org.example.ordersservice.dto.SpendSummaryResponse;
 import org.example.ordersservice.exception.InvalidAnalyticsRangeException;
+import org.example.ordersservice.mapper.AnalyticsMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,7 @@ import java.util.List;
 public class AnalyticsServiceImpl implements AnalyticsService {
 
     private final OrderLineItemViewDAO orderLineItemViewDAO;
+    private final AnalyticsMapper analyticsMapper;
 
     // ----------------------------------------------------------------
     // Public API
@@ -52,7 +54,7 @@ public class AnalyticsServiceImpl implements AnalyticsService {
         validateDays(days);
         LocalDateTime from = LocalDateTime.now().minusDays(days);
         return orderLineItemViewDAO.aggregateSpendByVendor(operatorId, from)
-                .stream().map(this::toVendorSpend).toList();
+                .stream().map(analyticsMapper::toVendorSpend).toList();
     }
 
     @Override
@@ -61,7 +63,7 @@ public class AnalyticsServiceImpl implements AnalyticsService {
         validateDays(days);
         LocalDateTime from = LocalDateTime.now().minusDays(days);
         return orderLineItemViewDAO.findPriceTrend(operatorId, catalogItemId, from)
-                .stream().map(this::toTrendPoint).toList();
+                .stream().map(analyticsMapper::toTrendPoint).toList();
     }
 
     // ----------------------------------------------------------------
@@ -71,18 +73,6 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     /** Renders the `days` window into a human label for the dashboard header. */
     private String periodLabel(int days) {
         return "Last " + days + (days == 1 ? " day" : " days");
-    }
-
-    /** Projects a VendorSpendProjection row into the public VendorSpend DTO. */
-    private SpendSummaryResponse.VendorSpend toVendorSpend(
-            OrderLineItemViewDAO.VendorSpendProjection p) {
-        return new SpendSummaryResponse.VendorSpend(
-                p.getVendorId(), p.getVendorName(), p.getSpend(), p.getItemCount());
-    }
-
-    /** Projects a PriceTrendProjection row into the public PriceTrendPoint DTO. */
-    private PriceTrendPoint toTrendPoint(OrderLineItemViewDAO.PriceTrendProjection p) {
-        return new PriceTrendPoint(p.getSubmittedAt(), p.getVendorName(), p.getUnitPrice());
     }
 
     /**
