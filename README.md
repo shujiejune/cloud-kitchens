@@ -38,30 +38,50 @@ A microservices backend that aggregates grocery prices from multiple vendors, pr
 ## Architecture
 
 ```
-                        ┌──────────────────────────────┐
-                        │         config-server         │  :8888
-                        │  (native, classpath config)   │
-                        └──────────────┬───────────────┘
-                                       │ bootstrap
-          ┌────────────────────────────▼──────────────────────────────┐
-          │                      eureka-server                         │  :8761
-          └───────┬───────────────────┬──────────────────┬────────────┘
-                  │ register          │ register         │ register
-         ┌────────▼────────┐ ┌───────▼───────┐ ┌───────▼───────────┐
-         │   api-gateway   │ │  auth-service │ │ catalog-service   │
-         │  (WebFlux/JWT)  │ │  (MySQL)      │ │ (MySQL)           │
-         │   :8080         │ │  :8081        │ │ :8082             │
-         └────────┬────────┘ └───────────────┘ └───────────────────┘
-                  │ routes (lb://)                        ▲ Feign
-          ┌───────▼───────────────────────────────────────────────┐
-          │              procurement-service                       │  :8083
-          │   (MySQL + MongoDB · Resilience4j · price optimizer)  │
-          └───────────────────────────┬───────────────────────────┘
-                                      │ same MySQL tables (read-only)
-                               ┌──────▼──────────┐
-                               │  orders-service  │  :8084
-                               │  (MySQL read)    │
-                               └─────────────────┘
+[ REACT SPA / CLIENT ]
+                               |
+                               | (HTTP Request + JWT)
+                               v
+======================================================================
+[ DATA PLANE ] - Where User Traffic Flows
+
+                      +-----------------+
+                      |   API Gateway   |
+                      |   (Port 8080)   |
+                      +--------+--------+
+                               | (Routes traffic based on Eureka lookup)
+               +---------------+---------------+
+               v               v               v
+        +------------+  +------------+  +-------------+
+        |Auth Service|  |Catalog Svc |  |Procurement  | ---> [ Amazon / Walmart APIs ]
+        | (Port 8081)|  | (Port 8082)|  | (Port 8083) |
+        +------------+  +------------+  +------+------+
+               |               |               |
+               |               |               v (Internal Feign Call)
+               |               |        +-------------+
+               |               |        |Orders Svc   |
+               |               |        | (Port 8084) |
+               |               |        +------+------+
+======================================================================
+               |               |               |
+               v               v               v
+          [ MySQL ]       [ MySQL ]   [ MongoDB & MySQL ]
+
+======================================================================
+[ CONTROL PLANE ] - Where Microservices Get Their Instructions
+
+  +-----------------------+              +-----------------------+
+  |     Config Server     |              |     Eureka Server     |
+  |     (Port 8888)       |              |     (Port 8761)       |
+  +-----------------------+              +-----------------------+
+      ^                                      ^
+      | Phase 1: Bootstrap                   | Phase 2: Registration & Discovery
+      |                                      |
+      | Every service connects here          | Every service registers its IP here 
+      | FIRST to download its database       | AFTER it boots up. The Gateway 
+      | passwords, port numbers, and         | checks Eureka constantly to know 
+      | Eureka URL.                          | where to route user traffic.
+======================================================================
 ```
 
 **Key architectural decisions:**
