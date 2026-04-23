@@ -419,13 +419,46 @@ Unit tests for reusable UI components (Autocomplete, Button, Spinner, ItemTable)
 
 **Fix**: Added an explicit staleness check in the Procurement Service — if the most recent snapshot's queriedAt is older than 5 minutes, force a re-fetch regardless of TTL. Added validation in the Kroger Feign client decoder: empty body throws a typed VendorEmptyResponseException (counted as a failure by the circuit breaker). Added a CloudWatch metric on cache hit vs. cache miss ratio to alert when abnormally high.
 
-## Scenario 2: JWT Token Accepted After User Logout
+## Scenario 2: Order History List Slows Down as Order Volume Grows
 
-**Symptom**: Security audit revealed that after an operator clicked Logout, their JWT remained valid until its 24-hour expiry — a stolen token could be replayed.
+**Symptom**: During load testing with a realistic dataset, `GET /api/v1/orders` (the order history list) was taking 800ms+ for a page of 20 orders — far above the 200ms p95 target. The endpoint is read-only and has no complex aggregation, so the latency made no sense.
 
-**Root Cause**: JWTs are stateless — the server has no record of issued tokens. "Logout" only cleared the client-side localStorage.
+**Discovery**: Enabled SQL logging in `config-repo/orders-service.yml` (`spring.jpa.show-sql: true`, `logging.level.org.hibernate.SQL: DEBUG`). Immediately visible in the log: a page of 20 orders produced 21 SQL statements — one `SELECT` for the orders page, then one `SELECT … FROM order_line_items WHERE order_id = ?` per row. Latency scaled linearly with page size.
 
-**Fix**: Implemented a Redis-backed token blocklist. On logout, the JWT's jti (JWT ID claim) is stored in Redis with a TTL equal to the token's remaining lifetime. The Spring Security filter checks this blocklist on every request. This adds one Redis lookup per request (approximately 1ms) — acceptable latency overhead.
+**Root Cause**: `OrderMapper.toSummary()` contains a MapStruct expression `java(orderView.getLineItems().size())` to populate the `lineItemCount` field. `OrderView.lineItems` is declared `@OneToMany(fetch = FetchType.LAZY)`, so each `.size()` call triggers a separate round-trip to MySQL. The `findAllByOperatorId` repository method returns plain `OrderView` entities with no JOIN FETCH, leaving every collection uninitialized. With a page size of N, the result is N+1 database queries.
+
+**Fix**: Replaced the entity-load approach with a JPQL constructor projection that computes the count in a single query, so `lineItems` is never loaded at all:
+
+```java
+// OrderViewDAO — replaces findAllByOperatorId for the list endpoint
+@Query("""
+    SELECT new org.example.ordersservice.dto.OrderSummaryResponse(
+        o.id, o.status, o.totalCost, o.estimatedSavings, o.submittedAt, COUNT(li))
+    FROM OrderView o LEFT JOIN o.lineItems li
+    WHERE o.operatorId = :operatorId
+    GROUP BY o.id, o.status, o.totalCost, o.estimatedSavings, o.submittedAt
+    """)
+Page<OrderSummaryResponse> findSummariesByOperatorId(
+        @Param("operatorId") Long operatorId, Pageable pageable);
+```
+
+`OrdersServiceImpl.listOrders()` now calls this method directly instead of loading `OrderView` entities and mapping them. The single SQL query returns the count as an aggregate — no secondary queries, no MapStruct expression touching a lazy collection.
+
+**Verifying the fix**: Integration test using Testcontainers (real MySQL). Insert 20 `OrderView` rows with 3 line items each via `procurement-service`'s write-side entities, then call the list endpoint and capture Hibernate statistics:
+
+```java
+SessionFactory sf = entityManagerFactory.unwrap(SessionFactory.class);
+sf.getStatistics().setStatisticsEnabled(true);
+sf.getStatistics().clear();
+
+mockMvc.perform(get("/api/v1/orders").header("X-Operator-Id", operatorId))
+       .andExpect(status().isOk())
+       .andExpect(jsonPath("$.content[0].lineItemCount").value(3));
+
+assertThat(sf.getStatistics().getQueryExecutionCount()).isEqualTo(2); // 1 data + 1 count for Page
+```
+
+Before the fix this assertion fails at 22. After the fix it passes at 2.
 
 ---
 
@@ -492,6 +525,122 @@ Each Spring Boot service exposes `/actuator/health`. Eureka uses this endpoint f
 **step 6 — event-driven order submission**: replace synchronous order fan-out with sqs-based event-driven flow — one ordersubmitted event per line item; per-vendor consumers process at their own rate, retry on failure, update status via callback.
 
 **step 7 — multi-region (future)**: deploy to a second aws region (us-east-1 mirror) with rds global database for < 1 second replication lag. route traffic via route 53 latency-based routing.
+
+Step 1 — Horizontal scaling of stateless services
+
+What to scale first: procurement-service → orders-service → catalog-service → auth-service
+
+Each service is stateless (no in-process state; JWT auth; operatorId-scoped queries), so adding instances costs almost nothing architecturally.
+
+Each replica self-registers in Eureka under the same spring.application.name. The gateway's lb://PROCUREMENT-SERVICE already round-robins across them.
+
+Switch the gateway discovery from Eureka to Kubernetes DNS (lb://procurement-service still works via Spring Cloud Kubernetes or a Kubernetes Service).
+
+Step 2 — Scale the API Gateway itself
+
+The gateway is reactive (WebFlux) and handles high concurrency per instance. To scale it:
+
+1. Put a load balancer (NGINX, AWS ALB, or a Kubernetes LoadBalancer Service) in front of multiple gateway replicas.
+2. The rate-limiter is Redis-backed — all gateway replicas share the same counters automatically. No change needed.
+3. Tune the current rate limits in config-repo/api-gateway.yml as you measure actual traffic:                                                                 
+   - procurement-service: currently 5 req/s burst 10 — this is the tightest constraint; raise only after confirming vendor APIs can handle it.
+                                                                                                                                                       
+Step 3 — Scale the databases
+
+MySQL (the main bottleneck at high load):
+
+┌──────────────────────────┬──────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────┐
+│        Technique         │                                   How                                    │                       When                        │   
+├──────────────────────────┼──────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ Read replicas            │ Route all SELECTs from orders-service and catalog-service to a replica   │ First step — zero schema changes                  │
+├──────────────────────────┼──────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ Connection pooling       │ HikariCP is already the default; tune maximumPoolSize in each service's  │ Before scaling instances                          │   
+│                          │ config-repo YAML                                                         │                                                   │   
+├──────────────────────────┼──────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────┤   
+│ Separate schemas per     │ Move each service to its own DB                                          │ If one service's write load causes lock           │   
+│ service                  │                                                                          │ contention for others                             │
+└──────────────────────────┴──────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────┘
+
+To add a read replica for orders-service, add a second datasource in config-repo/orders-service.yml:                                                          
+spring:
+datasource:                                                                                                                                                 
+url: jdbc:mysql://mysql-primary:3307/cloudkitchens_db   # writes (not used by orders-service)
+datasource-read:                                                                               
+url: jdbc:mysql://mysql-replica:3307/cloudkitchens_db   # reads                                                                                           
+Then annotate read-only service methods with @Transactional(readOnly = true) — Spring will route them to the replica.
+
+MongoDB (used by procurement-service for plans + price snapshots):
+- Add a replica set (1 primary + 2 secondaries) — MongoDB Atlas handles this automatically.
+- PriceSnapshot already has a 6h TTL index; no change needed for sharding at this scale.
+                                                                                                                                                          
+Step 4 — Introduce a message queue for vendor fan-out
+
+Currently VendorOrderFanOutService calls vendor APIs synchronously inside a request. At scale, one slow vendor blocks the thread and the user's HTTP
+connection.
+
+Replace with async fan-out:
+1. Add RabbitMQ or Kafka to the stack.
+2. submitOrder() writes the Order row and publishes one VendorOrderRequested event per line item, then returns immediately (HTTP 202).
+3. A new VendorWorker service (or a thread pool consumer inside procurement-service) consumes the events and calls vendor APIs.
+4. orders-service already polls OrderLineItem.status — no change needed on the read side.
+
+This decouples your response latency from vendor API latency and lets you scale vendor workers independently.
+                                                     
+Step 5 — Caching
+
+Add application-level caching for the two hot read paths:
+
+┌─────────────────────────────────┬──────────────────────────┬───────┐                                                                                        
+│              Path               │        Cache key         │  TTL  │
+├─────────────────────────────────┼──────────────────────────┼───────┤                                                                                        
+│ GET /api/v1/catalog/ingredients │ operatorId               │ 5 min │
+├─────────────────────────────────┼──────────────────────────┼───────┤
+│ GET /api/v1/orders (list)       │ operatorId + filter hash │ 30 s  │                                                                                        
+└─────────────────────────────────┴──────────────────────────┴───────┘
+
+Your config-repo/api-gateway.yml already has Redis wired in. Add Spring Cache (@Cacheable) backed by the same Redis instance in each service:
+config-repo/catalog-service.yml (already has Redis; just add cache config)
+
+Plans (MongoDB) already have a 6h TTL — that is already a cache.
+                                                                                                                                                        
+Step 6 — Observability before you scale further
+
+Before adding more replicas, make sure you can see what breaks:
+
+1. Add Zipkin to docker-compose.yml (currently commented out) — it is already instrumented in all services at 50% sampling.
+2. Add Prometheus + Grafana — actuator/prometheus is already exposed. Scrape it.
+3. Watch these metrics under load:                                                                                                                            
+   - resilience4j_circuitbreaker_state — vendor circuit breakers opening
+   - spring_cloud_gateway_requests_seconds — gateway latency per route                                                                                         
+   - HikariCP hikaricp_connections_pending — DB pool saturation
+                                                                                                                                                          
+Step 7 — Move to Kubernetes for production
+
+The services are already containerized. The migration path:
+
+1. Write one Deployment + Service YAML per module (7 total).
+2. Replace Eureka with Kubernetes Service DNS — or keep Eureka and add a ClusterIP Service pointing to the Eureka pod.
+3. Add HorizontalPodAutoscaler for procurement-service and orders-service based on CPU or custom metrics (requests/sec from Prometheus).
+4. Use Secrets for DB_PASSWORD and JWT_SECRET instead of environment variables.
+5. Use a managed MySQL (RDS, Cloud SQL) and MongoDB Atlas instead of in-cluster databases.
+ 
+Priority order
+
+┌──────────┬─────────────────────────────────────────┬──────────────────────────────────────────────────────┐
+│ Priority │                 Action                  │                        Impact                        │                                                 
+├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+│ 1        │ Tune HikariCP pool sizes                │ Prevents connection exhaustion immediately           │
+├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+│ 2        │ Scale procurement-service to 3 replicas │ Removes single point of failure on the critical path │                                                 
+├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────────────────┤                                                 
+│ 3        │ Add Zipkin + Prometheus                 │ Visibility before you go further                     │                                                 
+├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────────────────┤                                                 
+│ 4        │ MySQL read replica for orders-service   │ Isolates heavy analytics reads from writes           │
+├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────────────────┤                                                 
+│ 5        │ Async vendor fan-out via queue          │ Decouples latency, unlocks independent scaling       │
+├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────────────────┤                                                 
+│ 6        │ Kubernetes + HPA                        │ Elastic autoscaling in production                    │
+└──────────┴─────────────────────────────────────────┴──────────────────────────────────────────────────────┘
 
 ---
 

@@ -13,14 +13,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -130,7 +123,7 @@ public class PriceAggregator {
         List<PriceSnapshot> fresh = priceSnapshotDAO.findFreshSnapshots(operatorId, itemIds, freshAfter);
 
         // Keep only the most recent per (item, vendor).
-        Map<CacheKey, PriceSnapshot> out = new java.util.HashMap<>();
+        Map<CacheKey, PriceSnapshot> out = new HashMap<>();
         for (PriceSnapshot s : fresh) {
             CacheKey k = new CacheKey(s.getCatalogItemId(), s.getVendorId());
             PriceSnapshot cur = out.get(k);
