@@ -132,6 +132,12 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- Keeps the plain thin JAR as catalog-service-*.jar so other
+                         modules (orders-service) can depend on it normally. The
+                         executable fat JAR is published as catalog-service-*-exec.jar. -->
+                    <classifier>exec</classifier>
+                </configuration>
             </plugin>
         </plugins>
     </build>

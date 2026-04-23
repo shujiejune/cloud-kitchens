@@ -5,9 +5,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.example.ordersservice.dao.OrderLineItemViewDAO;
 import org.example.ordersservice.dto.PriceTrendPoint;
 import org.example.ordersservice.dto.SpendSummaryResponse;
+import org.example.ordersservice.exception.InvalidAnalyticsRangeException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -31,19 +33,35 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     @Override
     @Transactional(readOnly = true)
     public SpendSummaryResponse getSpendSummary(Long operatorId, int days) {
-        throw new UnsupportedOperationException("TODO: implement getSpendSummary");
+        validateDays(days);
+        LocalDateTime from = LocalDateTime.now().minusDays(days);
+        OrderLineItemViewDAO.SpendTotalsProjection totals =
+                orderLineItemViewDAO.aggregateTotals(operatorId, from);
+        List<SpendSummaryResponse.VendorSpend> breakdown = getSpendByVendor(operatorId, days);
+        return new SpendSummaryResponse(
+                totals.getTotalSpend(),
+                totals.getTotalSavings(),
+                totals.getOrderCount(),
+                periodLabel(days),
+                breakdown);
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<SpendSummaryResponse.VendorSpend> getSpendByVendor(Long operatorId, int days) {
-        throw new UnsupportedOperationException("TODO: implement getSpendByVendor");
+        validateDays(days);
+        LocalDateTime from = LocalDateTime.now().minusDays(days);
+        return orderLineItemViewDAO.aggregateSpendByVendor(operatorId, from)
+                .stream().map(this::toVendorSpend).toList();
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<PriceTrendPoint> getPriceTrends(Long operatorId, Long catalogItemId, int days) {
-        throw new UnsupportedOperationException("TODO: implement getPriceTrends");
+        validateDays(days);
+        LocalDateTime from = LocalDateTime.now().minusDays(days);
+        return orderLineItemViewDAO.findPriceTrend(operatorId, catalogItemId, from)
+                .stream().map(this::toTrendPoint).toList();
     }
 
     // ----------------------------------------------------------------
@@ -52,19 +70,19 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 
     /** Renders the `days` window into a human label for the dashboard header. */
     private String periodLabel(int days) {
-        throw new UnsupportedOperationException("TODO: implement periodLabel");
+        return "Last " + days + (days == 1 ? " day" : " days");
     }
 
     /** Projects a VendorSpendProjection row into the public VendorSpend DTO. */
     private SpendSummaryResponse.VendorSpend toVendorSpend(
-            OrderLineItemViewDAO.VendorSpendProjection projection) {
-        throw new UnsupportedOperationException("TODO: map VendorSpendProjection -> VendorSpend");
+            OrderLineItemViewDAO.VendorSpendProjection p) {
+        return new SpendSummaryResponse.VendorSpend(
+                p.getVendorId(), p.getVendorName(), p.getSpend(), p.getItemCount());
     }
 
     /** Projects a PriceTrendProjection row into the public PriceTrendPoint DTO. */
-    private PriceTrendPoint toTrendPoint(
-            OrderLineItemViewDAO.PriceTrendProjection projection) {
-        throw new UnsupportedOperationException("TODO: map PriceTrendProjection -> PriceTrendPoint");
+    private PriceTrendPoint toTrendPoint(OrderLineItemViewDAO.PriceTrendProjection p) {
+        return new PriceTrendPoint(p.getSubmittedAt(), p.getVendorName(), p.getUnitPrice());
     }
 
     /**
@@ -72,6 +90,9 @@ public class AnalyticsServiceImpl implements AnalyticsService {
      * building the "from" Instant handed to the DAO.
      */
     private void validateDays(int days) {
-        throw new UnsupportedOperationException("TODO: implement validateDays");
+        if (days < 1 || days > 365) {
+            throw new InvalidAnalyticsRangeException(
+                    "days must be between 1 and 365, got: " + days);
+        }
     }
 }
