@@ -21,12 +21,9 @@ import java.util.UUID;
  * Encapsulates all JWT operations using JJWT 0.12.
  *
  * Algorithm : HS256 (HMAC-SHA-256)
- * Expiry     : 24 hours (configurable via jwt.expiration, in milliseconds)
- * Claims     : sub=operatorId (String), email, jti=UUID
- *
- * The secret key is read from application.yml — must be at least
- * 32 bytes (256 bits) for HS256.  In production this value comes
- * from AWS Secrets Manager injected as an environment variable.
+ * Access token expiry  : 24 hours (jwt.expiration, in ms)
+ * Refresh token expiry : 7 days
+ * Claims : sub=operatorId (String), email, jti=UUID, type (access|refresh)
  */
 @Component
 public class JwtService {
@@ -45,10 +42,7 @@ public class JwtService {
     // Token generation
     // ----------------------------------------------------------------
 
-    /**
-     * Builds and signs a JWT for the given operator.
-     * The token is signed using HS256 with the configured secret key.
-     */
+    /** Builds and signs a short-lived access JWT (24 h). */
     public String generateToken(Operator operator) {
         Instant now    = Instant.now();
         Instant expiry = now.plusMillis(expirationMs);
@@ -56,7 +50,23 @@ public class JwtService {
         return Jwts.builder()
                 .subject(String.valueOf(operator.getId()))
                 .claim("email", operator.getEmail())
-                .id(UUID.randomUUID().toString())   // jti — unique per token, used for blocklist
+                .claim("type", "access")
+                .id(UUID.randomUUID().toString())
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(expiry))
+                .signWith(secretKey)
+                .compact();
+    }
+
+    /** Builds and signs a long-lived refresh JWT (7 days). */
+    public String generateRefreshToken(Operator operator) {
+        Instant now    = Instant.now();
+        Instant expiry = now.plus(Duration.ofDays(7));
+
+        return Jwts.builder()
+                .subject(String.valueOf(operator.getId()))
+                .claim("type", "refresh")
+                .id(UUID.randomUUID().toString())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
                 .signWith(secretKey)
@@ -72,7 +82,7 @@ public class JwtService {
         return Long.parseLong(parseClaims(token).getSubject());
     }
 
-    /** Extracts the email claim from a valid token. */
+    /** Extracts the email claim from a valid access token. */
     public String extractEmail(String token) {
         return parseClaims(token).get("email", String.class);
     }
@@ -82,10 +92,14 @@ public class JwtService {
         return parseClaims(token).getId();
     }
 
+    /** Returns true only if the token carries {@code type=refresh}. */
+    public boolean isRefreshToken(String token) {
+        return "refresh".equals(parseClaims(token).get("type", String.class));
+    }
+
     /**
      * Returns the remaining validity duration of a token.
-     * Used to set the Redis blocklist entry TTL on logout so the
-     * Redis key auto-expires when the token would have expired anyway.
+     * Used to set the Redis blocklist entry TTL on logout.
      */
     public Duration getRemainingValidity(String token) {
         Date expiration = parseClaims(token).getExpiration();
@@ -101,7 +115,6 @@ public class JwtService {
 
     /**
      * Returns true if the token's signature is valid and it has not expired.
-     * Does NOT check the Redis blocklist — that is the Gateway's responsibility.
      *
      * @throws JwtException if the token is malformed or the signature is invalid
      */

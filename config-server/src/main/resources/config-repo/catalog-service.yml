@@ -5,9 +5,32 @@ spring:
   application:
     name: catalog-service
   datasource:
-    url: jdbc:mysql://localhost:3307/cloudkitchens_db?useSSL=false
-    username: root
-    password: yourpassword
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/${DB_NAME:cloudkitchens_db}?useSSL=false
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:yourpassword}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
+  flyway:
+    table: flyway_schema_history_catalog
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761}/eureka/
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  tracing:
+    sampling:
+      probability: 0.5
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_URL:http://localhost:9411}/api/v2/spans
+
+logging:
+  level:
+    org.example.catalogservice: DEBUG

@@ -1,41 +1,37 @@
 package org.example.authservice.controller;
 
-import org.example.authservice.dto.LoginRequest;
-import org.example.authservice.dto.RegisterRequest;
-import org.example.authservice.dto.AuthResponse;
-import org.example.authservice.dto.OperatorResponse;
-import org.example.authservice.security.JwtService;
-import org.example.authservice.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.example.authservice.dto.AuthResponse;
+import org.example.authservice.dto.ForgotPasswordRequest;
+import org.example.authservice.dto.ForgotPasswordResponse;
+import org.example.authservice.dto.LoginRequest;
+import org.example.authservice.dto.OperatorResponse;
+import org.example.authservice.dto.RefreshRequest;
+import org.example.authservice.dto.RegisterRequest;
+import org.example.authservice.dto.ResetPasswordRequest;
+import org.example.authservice.service.AuthService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
 
-/**
- * REST controller for authentication endpoints.
- *
- * All paths are under /api/v1/auth.
- * POST /register and POST /login are permit-all in the Security config.
- * POST /logout and GET /me require a valid JWT (enforced by the Gateway
- * and by this service's own JwtAuthFilter).
- */
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
-@Tag(name = "Auth", description = "Operator registration, login, and logout")
+@Tag(name = "Auth", description = "Operator registration, login, token refresh, and password management")
 public class AuthController {
 
     private final AuthService authService;
-    private final JwtService jwtService;
-
-    // ----------------------------------------------------------------
-    // POST /api/v1/auth/register
-    // ----------------------------------------------------------------
 
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
@@ -44,28 +40,12 @@ public class AuthController {
         return authService.register(request);
     }
 
-    // ----------------------------------------------------------------
-    // POST /api/v1/auth/login
-    // ----------------------------------------------------------------
-
     @PostMapping("/login")
-    @Operation(summary = "Login and receive a JWT")
+    @Operation(summary = "Login and receive JWT access + refresh tokens")
     public AuthResponse login(@Valid @RequestBody LoginRequest request) {
         return authService.login(request);
     }
 
-    // ----------------------------------------------------------------
-    // POST /api/v1/auth/logout
-    // ----------------------------------------------------------------
-
-    /**
-     * Adds the supplied JWT's jti to the Redis blocklist so the Gateway
-     * refuses all future requests carrying that token.
-     *
-     * The token is read from the Authorization header because the client
-     * may call this endpoint immediately before clearing localStorage —
-     * we can't rely on the body.
-     */
     @PostMapping("/logout")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(summary = "Invalidate the current JWT (server-side blocklist)")
@@ -75,16 +55,26 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
-    // ----------------------------------------------------------------
-    // GET /api/v1/auth/me
-    // ----------------------------------------------------------------
+    @PostMapping("/refresh")
+    @Operation(summary = "Obtain a new access token using a valid refresh token")
+    public AuthResponse refresh(@Valid @RequestBody RefreshRequest request) {
+        return authService.refresh(request);
+    }
 
-    /**
-     * Returns the public profile of the currently authenticated operator.
-     *
-     * @AuthenticationPrincipal injects the operatorId Long that the
-     * JwtAuthFilter placed into the SecurityContext principal.
-     */
+    @PostMapping("/forgot-password")
+    @Operation(summary = "Request a password-reset token (sent via email in production)")
+    public ForgotPasswordResponse forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        return authService.forgotPassword(request);
+    }
+
+    @PostMapping("/reset-password")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "Reset the operator's password using a reset token")
+    public ResponseEntity<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        authService.resetPassword(request);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/me")
     @Operation(summary = "Get the current operator's profile")
     public OperatorResponse me(@AuthenticationPrincipal Long operatorId) {

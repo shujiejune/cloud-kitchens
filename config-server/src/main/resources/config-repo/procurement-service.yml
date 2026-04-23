@@ -5,54 +5,71 @@ spring:
   application:
     name: procurement-service
   datasource:
-    url: jdbc:mysql://localhost:3307/cloudkitchens_db?useSSL=false
-    username: root
-    password: yourpassword
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/${DB_NAME:cloudkitchens_db}?useSSL=false
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:yourpassword}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
+  flyway:
+    table: flyway_schema_history_procurement
   data:
     mongodb:
-      uri: mongodb://localhost:27017/cloudkitchens_procurement
+      uri: ${MONGO_URI:mongodb://localhost:27017/cloudkitchens_procurement}
 
-# Resilience4j Circuit Breaker Config for Feign Clients
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761}/eureka/
+
+# Resilience4j Circuit Breaker Config for vendor Feign clients
 resilience4j:
   circuitbreaker:
     instances:
       amazonClient:
         slidingWindowSize: 5
         failureRateThreshold: 50
-        waitDurationInOpenState: 30000ms # 30 seconds
+        waitDurationInOpenState: 30000ms
         permittedNumberOfCallsInHalfOpenState: 2
       walmartClient:
         slidingWindowSize: 5
         failureRateThreshold: 50
         waitDurationInOpenState: 30000ms
+        permittedNumberOfCallsInHalfOpenState: 2
       krogerClient:
         slidingWindowSize: 5
         failureRateThreshold: 50
         waitDurationInOpenState: 30000ms
+        permittedNumberOfCallsInHalfOpenState: 2
 
-# Vendor API base URLs — referenced by @FeignClient(url=...) in VendorApiClients.
-# TODO: replace these PLACEHOLDER hostnames with the real vendor endpoints
-#       (or per-environment URLs via Spring profiles) before hitting prod.
+# Vendor API base URLs — replace PLACEHOLDER values with real endpoints before going to prod
 vendor:
   amazon:
-    api-base-url: https://api.amazon.example.com    # PLACEHOLDER
+    api-base-url: ${VENDOR_AMAZON_URL:https://api.amazon.example.com}
   walmart:
-    api-base-url: https://api.walmart.example.com   # PLACEHOLDER
+    api-base-url: ${VENDOR_WALMART_URL:https://api.walmart.example.com}
   kroger:
-    api-base-url: https://api.kroger.example.com    # PLACEHOLDER
+    api-base-url: ${VENDOR_KROGER_URL:https://api.kroger.example.com}
 
 # Procurement-service tuning knobs
 procurement:
   optimizer:
-    # Consolidation sweep: move a line from its cheapest single-item vendor
-    # to a vendor already used elsewhere in the plan when the per-item cost
-    # delta is strictly below this threshold.  Reduces invoice count without
-    # materially raising total cost.
-    consolidation-threshold: 5.00
+    consolidation-threshold: ${CONSOLIDATION_THRESHOLD:5.00}
   vendor-call:
-    # Max wait for a vendor rate-limit permit before the call is treated as
-    # a vendor failure (circuit breaker records a failure).
-    acquire-timeout-ms: 2000
+    acquire-timeout-ms: ${VENDOR_ACQUIRE_TIMEOUT_MS:2000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  tracing:
+    sampling:
+      probability: 0.5
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_URL:http://localhost:9411}/api/v2/spans
+
+logging:
+  level:
+    org.example.procurementservice: DEBUG

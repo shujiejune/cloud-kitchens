@@ -1,60 +1,69 @@
 package org.example.authservice.service;
 
-import org.example.authservice.dto.LoginRequest;
-import org.example.authservice.dto.RegisterRequest;
 import org.example.authservice.dto.AuthResponse;
+import org.example.authservice.dto.ForgotPasswordRequest;
+import org.example.authservice.dto.ForgotPasswordResponse;
+import org.example.authservice.dto.LoginRequest;
+import org.example.authservice.dto.RefreshRequest;
+import org.example.authservice.dto.RegisterRequest;
+import org.example.authservice.dto.ResetPasswordRequest;
 import org.example.authservice.dto.OperatorResponse;
 
 /**
  * Contract for authentication and identity operations.
- *
- * Separating interface from implementation allows easy mocking in unit
- * tests and keeps the controller decoupled from implementation details.
  */
 public interface AuthService {
 
     /**
-     * Creates a new Operator account.
-     *
-     * Steps:
-     *   1. Assert email is not already registered (throws DuplicateEmailException).
-     *   2. BCrypt-hash the raw password (cost 12).
-     *   3. Persist Operator with status=ACTIVE.
-     *   4. Issue a JWT and return AuthResponse.
+     * Creates a new Operator account and returns an AuthResponse with access + refresh tokens.
      *
      * @throws org.example.authservice.exception.DuplicateEmailException if email already exists
      */
     AuthResponse register(RegisterRequest request);
 
     /**
-     * Authenticates an operator and issues a JWT.
-     *
-     * Steps:
-     *   1. Load Operator by email (throws InvalidCredentialsException if not found).
-     *   2. BCrypt.matches(rawPassword, passwordHash).
-     *   3. Assert operator status is ACTIVE (throws AccountSuspendedException if SUSPENDED).
-     *   4. Build JWT: sub=operatorId, email claim, jti=UUID, 24h expiry.
-     *   5. Return AuthResponse.
+     * Authenticates an operator and returns an AuthResponse with access + refresh tokens.
+     * Records failed attempts in Redis and locks the account after 5 consecutive failures.
      *
      * @throws org.example.authservice.exception.InvalidCredentialsException on bad email/password
      * @throws org.example.authservice.exception.AccountSuspendedException   if operator is SUSPENDED
+     * @throws org.example.authservice.exception.AccountLockedException      if too many failed attempts
      */
     AuthResponse login(LoginRequest request);
 
     /**
      * Invalidates a JWT by writing its jti to the Redis blocklist.
      *
-     * The blocklist entry TTL = remaining token lifetime so Redis
-     * auto-expires the entry when the token would have expired anyway.
-     * The Gateway checks the blocklist on every request.
-     *
      * @param bearerToken the raw "Bearer <token>" header value
      */
     void logout(String bearerToken);
 
     /**
+     * Issues a new access token from a valid, non-expired refresh token.
+     * The refresh token itself is not rotated.
+     *
+     * @throws org.example.authservice.exception.InvalidCredentialsException on invalid/expired refresh token
+     */
+    AuthResponse refresh(RefreshRequest request);
+
+    /**
+     * Generates a password-reset token and stores it in Redis (15-min TTL).
+     * In production, this token would be e-mailed; in dev it is returned in the response body.
+     *
+     * Always returns HTTP 200 regardless of whether the email is registered
+     * (prevents account enumeration).
+     */
+    ForgotPasswordResponse forgotPassword(ForgotPasswordRequest request);
+
+    /**
+     * Validates the reset token, updates the operator's password hash, and deletes the token.
+     *
+     * @throws org.example.authservice.exception.InvalidCredentialsException on invalid/expired token
+     */
+    void resetPassword(ResetPasswordRequest request);
+
+    /**
      * Returns the public profile of the currently authenticated operator.
-     * operatorId is extracted from the SecurityContext (set by the JWT filter).
      */
     OperatorResponse getCurrentOperator(Long operatorId);
 }
