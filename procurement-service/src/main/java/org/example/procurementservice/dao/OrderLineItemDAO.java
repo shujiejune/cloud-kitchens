@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -40,6 +41,7 @@ public interface OrderLineItemDAO extends JpaRepository<OrderLineItem, Long> {
      * issuing one UPDATE per row.
      */
     @Modifying
+    @Transactional
     @Query("""
             UPDATE OrderLineItem li
             SET li.subOrderStatus = :status,

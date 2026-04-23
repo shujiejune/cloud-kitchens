@@ -43,3 +43,16 @@ vendor:
     api-base-url: https://api.walmart.example.com   # PLACEHOLDER
   kroger:
     api-base-url: https://api.kroger.example.com    # PLACEHOLDER
+
+# Procurement-service tuning knobs
+procurement:
+  optimizer:
+    # Consolidation sweep: move a line from its cheapest single-item vendor
+    # to a vendor already used elsewhere in the plan when the per-item cost
+    # delta is strictly below this threshold.  Reduces invoice count without
+    # materially raising total cost.
+    consolidation-threshold: 5.00
+  vendor-call:
+    # Max wait for a vendor rate-limit permit before the call is treated as
+    # a vendor failure (circuit breaker records a failure).
+    acquire-timeout-ms: 2000

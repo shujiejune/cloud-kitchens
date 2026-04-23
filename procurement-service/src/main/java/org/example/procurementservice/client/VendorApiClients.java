@@ -57,7 +57,7 @@ public class VendorApiClients {
         record AmazonSearchRequest(String keywords, int itemCount) {}
 
         record AmazonSearchResponse(List<AmazonItem> searchResult) {
-            record AmazonItem(String asin, String title,
+            public record AmazonItem(String asin, String title,
                               BigDecimal price, String detailPageUrl) {}
         }
 
@@ -88,7 +88,7 @@ public class VendorApiClients {
         record WalmartSearchRequest(String query, int limit) {}
 
         record WalmartSearchResponse(List<WalmartItem> items) {
-            record WalmartItem(String itemId, String name,
+            public record WalmartItem(String itemId, String name,
                                BigDecimal salePrice, String productUrl) {}
         }
 
@@ -120,9 +120,9 @@ public class VendorApiClients {
         record KrogerSearchRequest(String term, int limit) {}
 
         record KrogerSearchResponse(List<KrogerProduct> data) {
-            record KrogerProduct(String productId, String description,
+            public record KrogerProduct(String productId, String description,
                                  List<KrogerPrice> items) {
-                record KrogerPrice(BigDecimal regular, String size, String uom) {}
+                public record KrogerPrice(BigDecimal regular, String size, String uom) {}
             }
         }
 
