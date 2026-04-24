@@ -23,6 +23,9 @@ public record PurchasePlanResponse(
         /** Opaque identifier used in PUT /plan/{planId}/override and POST /plan/{planId}/submit. */
         String planId,
 
+        /** PENDING while Kafka consumer fetches prices; READY when the plan is usable; FAILED if all vendors failed. */
+        String status,
+
         /** Per-item vendor assignment + price detail. */
         List<PlanLineItem> items,
 

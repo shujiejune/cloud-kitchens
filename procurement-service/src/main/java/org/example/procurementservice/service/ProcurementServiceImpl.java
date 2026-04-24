@@ -35,6 +35,10 @@ import org.example.procurementservice.exception.StalePriceSnapshotException;
 import org.example.procurementservice.exception.SubOrderRetryNotAllowedException;
 import org.example.procurementservice.exception.VendorNotFoundException;
 import org.example.procurementservice.exception.VendorUnavailableException;
+import org.example.procurementservice.event.PriceFetchRequestedEvent;
+import org.example.procurementservice.event.PriceFetchRequestedEvent.ItemFetchSpec;
+import org.example.procurementservice.event.SubOrderDispatchEvent;
+import org.example.procurementservice.exception.PlanGenerationFailedException;
 import org.example.procurementservice.mapper.PlanMapper;
 import org.example.procurementservice.mapper.VendorMapper;
 import org.springframework.data.domain.Sort;
@@ -89,6 +93,7 @@ public class ProcurementServiceImpl implements ProcurementService {
     private final PriceAggregator priceAggregator;
     private final OptimizerService optimizerService;
     private final VendorOrderFanOutService vendorOrderFanOutService;
+    private final KafkaProducerService kafkaProducerService;
     private final TransactionTemplate transactionTemplate;
     private final VendorMapper vendorMapper;
     private final PlanMapper planMapper;
@@ -102,6 +107,7 @@ public class ProcurementServiceImpl implements ProcurementService {
                                   PriceAggregator priceAggregator,
                                   OptimizerService optimizerService,
                                   VendorOrderFanOutService vendorOrderFanOutService,
+                                  KafkaProducerService kafkaProducerService,
                                   PlatformTransactionManager transactionManager,
                                   VendorMapper vendorMapper,
                                   PlanMapper planMapper) {
@@ -114,6 +120,7 @@ public class ProcurementServiceImpl implements ProcurementService {
         this.priceAggregator = priceAggregator;
         this.optimizerService = optimizerService;
         this.vendorOrderFanOutService = vendorOrderFanOutService;
+        this.kafkaProducerService = kafkaProducerService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.vendorMapper = vendorMapper;
         this.planMapper = planMapper;
@@ -137,14 +144,44 @@ public class ProcurementServiceImpl implements ProcurementService {
                     "Catalog returned no items for requested ids " + request.catalogItemIds(), null);
         }
 
-        // Search term used against vendor APIs = item name (could append category later).
+        // Fast path: warm cache hit — run synchronously, skip Kafka.
+        if (!request.refreshPrices() && priceAggregator.isCacheWarm(operatorId, request.catalogItemIds())) {
+            return generatePlanSync(operatorId, catalogItems, false);
+        }
+
+        // Async path: publish to Kafka, return a PENDING plan immediately.
+        List<ItemFetchSpec> itemSpecs = catalogItems.stream()
+                .map(ci -> new ItemFetchSpec(ci.id(), ci.name(), ci.unit(), ci.preferredQty()))
+                .toList();
+
+        Instant now = Instant.now();
+        Plan plan = Plan.builder()
+                .operatorId(operatorId)
+                .status(Plan.PlanStatus.PENDING)
+                .items(List.of())
+                .vendorWarnings(List.of())
+                .vendorSubtotals(List.of())
+                .generatedAt(now)
+                .ttlExpiry(now.plus(PLAN_TTL_HOURS, ChronoUnit.HOURS))
+                .build();
+        planDAO.save(plan);
+
+        kafkaProducerService.publishPriceFetchRequested(
+                new PriceFetchRequestedEvent(plan.getId(), operatorId, itemSpecs, request.refreshPrices()));
+
+        return planMapper.toResponse(plan);
+    }
+
+    /** Synchronous plan generation used on the warm-cache fast path. */
+    private PurchasePlanResponse generatePlanSync(Long operatorId,
+                                                   List<CatalogItemResponse> catalogItems,
+                                                   boolean refreshPrices) {
         Map<Long, String> itemsByNameKey = new LinkedHashMap<>();
         for (CatalogItemResponse ci : catalogItems) {
             itemsByNameKey.put(ci.id(), ci.name());
         }
 
-        PriceAggregator.Result aggregated = priceAggregator.aggregate(
-                operatorId, itemsByNameKey, request.refreshPrices());
+        PriceAggregator.Result aggregated = priceAggregator.aggregate(operatorId, itemsByNameKey, refreshPrices);
 
         Map<Long, Vendor> vendorsById = vendorDAO.findAll().stream()
                 .collect(Collectors.toMap(Vendor::getId, v -> v));
@@ -154,8 +191,7 @@ public class ProcurementServiceImpl implements ProcurementService {
                         v -> new OptimizerService.VendorMeta(v.getId(), v.getName())));
 
         List<OptimizerService.ItemMeta> itemMetas = catalogItems.stream()
-                .map(ci -> new OptimizerService.ItemMeta(
-                        ci.id(), ci.name(), ci.unit(), ci.preferredQty()))
+                .map(ci -> new OptimizerService.ItemMeta(ci.id(), ci.name(), ci.unit(), ci.preferredQty()))
                 .toList();
 
         OptimizerService.OptimizeResult optimized = optimizerService.assignOptimal(
@@ -174,6 +210,7 @@ public class ProcurementServiceImpl implements ProcurementService {
         Instant now = Instant.now();
         Plan plan = Plan.builder()
                 .operatorId(operatorId)
+                .status(Plan.PlanStatus.READY)
                 .items(optimized.items())
                 .totalCost(optimized.totalCost())
                 .estimatedSavings(optimized.estimatedSavings())
@@ -195,6 +232,10 @@ public class ProcurementServiceImpl implements ProcurementService {
     public PurchasePlanResponse getPlan(Long operatorId, String planId) {
         Plan plan = planDAO.findByIdAndOperatorId(planId, operatorId)
                 .orElseThrow(() -> new PlanNotFoundException("Plan not found: " + planId));
+        if (plan.getStatus() == Plan.PlanStatus.FAILED) {
+            throw new PlanGenerationFailedException(
+                    "Plan " + planId + " failed: all vendor API calls were exhausted");
+        }
         return planMapper.toResponse(plan);
     }
 
@@ -270,44 +311,38 @@ public class ProcurementServiceImpl implements ProcurementService {
         // Load back with lines (ensures ids on each OrderLineItem).
         List<OrderLineItem> lines = orderLineItemDAO.findAllByOrderId(orderId);
 
-        // Step 2 — fan out to vendors (outside any DB transaction).
-        List<VendorOrderFanOutService.Result> results =
-                vendorOrderFanOutService.fanOut(operatorId, lines);
+        // Step 2 — publish one SubOrderDispatchEvent per line item to Kafka.
+        // Vendor is LAZY on OrderLineItem; force-init inside a transaction, and
+        // collect line context for the response in the same pass.
+        record LineCtx(Long lineItemId, Long vendorId, String vendorName,
+                       Long catalogItemId, java.math.BigDecimal quantity,
+                       java.math.BigDecimal lineTotal) {}
 
-        Map<Long, VendorOrderFanOutService.Result> resultByLineId = results.stream()
-                .collect(Collectors.toMap(VendorOrderFanOutService.Result::lineItemId, r -> r));
+        List<LineCtx> lineContexts = transactionTemplate.execute(s ->
+                lines.stream().map(li -> {
+                    Long vendorId = li.getVendor().getId();
+                    String vendorName = li.getVendor().getName();
+                    kafkaProducerService.publishSubOrderDispatch(new SubOrderDispatchEvent(
+                            orderId, li.getId(), operatorId, vendorId, vendorName,
+                            li.getCatalogItemId(), li.getQuantity(), li.getUnitPrice()));
+                    return new LineCtx(li.getId(), vendorId, vendorName,
+                            li.getCatalogItemId(), li.getQuantity(), li.getLineTotal());
+                }).toList());
 
-        // Step 3 — update order status based on sub-order outcomes.
-        boolean anyFailed = results.stream().anyMatch(r -> r.status() == SubOrderStatus.FAILED);
-        OrderStatus finalOrderStatus = anyFailed ? OrderStatus.PARTIAL_FAILURE : OrderStatus.COMPLETE;
-        transactionTemplate.executeWithoutResult(s -> {
-            Order o = orderDAO.findById(orderId).orElseThrow();
-            o.setStatus(finalOrderStatus);
-            orderDAO.save(o);
-        });
-
-        // Step 4 — delete plan so it can't be replayed.
+        // Step 3 — delete plan so it can't be replayed.
         planDAO.deleteByIdAndOperatorId(planId, operatorId);
 
-        // Step 5 — assemble response.
-        List<OrderSubmissionResponse.LineItemStatus> lineStatuses = new ArrayList<>();
-        for (OrderLineItem li : lines) {
-            VendorOrderFanOutService.Result r = resultByLineId.get(li.getId());
-            lineStatuses.add(new OrderSubmissionResponse.LineItemStatus(
-                    li.getId(),
-                    li.getCatalogItemId(),
-                    li.getVendor().getId(),
-                    li.getVendor().getName(),
-                    li.getQuantity(),
-                    li.getLineTotal(),
-                    r.status().name(),
-                    r.vendorOrderRef(),
-                    r.failureReason()));
-        }
+        // Step 4 — assemble response (all lines PENDING; consumer updates them asynchronously).
+        List<OrderSubmissionResponse.LineItemStatus> lineStatuses = lineContexts.stream()
+                .map(ctx -> new OrderSubmissionResponse.LineItemStatus(
+                        ctx.lineItemId(), ctx.catalogItemId(), ctx.vendorId(), ctx.vendorName(),
+                        ctx.quantity(), ctx.lineTotal(),
+                        SubOrderStatus.PENDING.name(), null, null))
+                .toList();
 
         return new OrderSubmissionResponse(
                 orderId,
-                finalOrderStatus.name(),
+                OrderStatus.SUBMITTED.name(),
                 persisted.getTotalCost(),
                 persisted.getEstimatedSavings(),
                 persisted.getSubmittedAt(),

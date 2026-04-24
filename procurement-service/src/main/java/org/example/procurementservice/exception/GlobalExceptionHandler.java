@@ -57,6 +57,12 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
     }
 
+    @ExceptionHandler(PlanGenerationFailedException.class)
+    public ResponseEntity<ErrorResponse> handlePlanGenerationFailed(PlanGenerationFailedException ex) {
+        log.warn("Plan generation failed: {}", ex.getMessage());
+        return build(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+    }
+
     // ---- 400 ----
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -53,12 +53,15 @@ public class ProcurementController {
     // ----------------------------------------------------------------
 
     @PostMapping("/plan")
-    @Operation(summary = "Generate a purchase plan across active vendors")
-    public PurchasePlanResponse generatePlan(
+    @Operation(summary = "Generate a purchase plan across active vendors. "
+            + "Returns 200 when prices are cached, 202 (PENDING) when async vendor fetch is dispatched.")
+    public ResponseEntity<PurchasePlanResponse> generatePlan(
             @Valid @RequestBody GeneratePlanRequest request,
             @RequestHeader(HttpHeaders.AUTHORIZATION) String bearerToken,
             @AuthenticationPrincipal Long operatorId) {
-        return procurementService.generatePlan(operatorId, request, bearerToken);
+        PurchasePlanResponse result = procurementService.generatePlan(operatorId, request, bearerToken);
+        HttpStatus status = "PENDING".equals(result.status()) ? HttpStatus.ACCEPTED : HttpStatus.OK;
+        return ResponseEntity.status(status).body(result);
     }
 
     // ----------------------------------------------------------------
@@ -66,11 +69,14 @@ public class ProcurementController {
     // ----------------------------------------------------------------
 
     @GetMapping("/plan/{planId}")
-    @Operation(summary = "Fetch a previously generated plan")
-    public PurchasePlanResponse getPlan(
+    @Operation(summary = "Fetch a previously generated plan. "
+            + "Returns 200 when READY, 202 while PENDING, 503 if generation failed.")
+    public ResponseEntity<PurchasePlanResponse> getPlan(
             @PathVariable String planId,
             @AuthenticationPrincipal Long operatorId) {
-        return procurementService.getPlan(operatorId, planId);
+        PurchasePlanResponse result = procurementService.getPlan(operatorId, planId);
+        HttpStatus status = "PENDING".equals(result.status()) ? HttpStatus.ACCEPTED : HttpStatus.OK;
+        return ResponseEntity.status(status).body(result);
     }
 
     // ----------------------------------------------------------------
@@ -91,25 +97,19 @@ public class ProcurementController {
     // ----------------------------------------------------------------
 
     /**
-     * Submits the plan, writes Order + OrderLineItems, fans out vendor calls.
-     * Returns 201 Created when every sub-order is CONFIRMED, or 207 Multi-Status
-     * when at least one sub-order FAILED. The body is the same shape in both
-     * cases so the client renders a uniform status table.
+     * Submits the plan, persists Order + OrderLineItems, and dispatches vendor sub-orders
+     * asynchronously via Kafka. Returns 202 Accepted immediately; all line items start as
+     * PENDING. Poll GET /orders/{id} (via orders-service) to track final status.
      */
     @PostMapping("/plan/{planId}/submit")
-    @Operation(summary = "Submit the plan and fan out vendor orders")
+    @Operation(summary = "Submit the plan and dispatch vendor orders asynchronously")
     public ResponseEntity<OrderSubmissionResponse> submitOrder(
             @PathVariable String planId,
             @Valid @RequestBody SubmitOrderRequest request,
             @AuthenticationPrincipal Long operatorId) {
 
         OrderSubmissionResponse result = procurementService.submitOrder(operatorId, planId, request);
-
-        boolean anyFailed = result.lineItems().stream()
-                .anyMatch(li -> "FAILED".equals(li.subOrderStatus()));
-        HttpStatus status = anyFailed ? HttpStatus.MULTI_STATUS : HttpStatus.CREATED;
-
-        return ResponseEntity.status(status).body(result);
+        return ResponseEntity.accepted().body(result);
     }
 
     // ----------------------------------------------------------------

@@ -114,6 +114,20 @@ public class PriceAggregator {
         return new Result(allSnapshots, new ArrayList<>(vendorWarnings));
     }
 
+    /**
+     * Returns true when every requested catalog item has at least one fresh snapshot
+     * in MongoDB (i.e. queried within CACHE_FRESHNESS_MINUTES). Used by generatePlan
+     * to decide whether to take the synchronous fast path or the async Kafka path.
+     */
+    public boolean isCacheWarm(Long operatorId, List<Long> catalogItemIds) {
+        Instant freshAfter = Instant.now().minus(CACHE_FRESHNESS_MINUTES, ChronoUnit.MINUTES);
+        List<PriceSnapshot> fresh = priceSnapshotDAO.findFreshSnapshots(operatorId, catalogItemIds, freshAfter);
+        Set<Long> coveredItems = fresh.stream()
+                .map(PriceSnapshot::getCatalogItemId)
+                .collect(java.util.stream.Collectors.toSet());
+        return coveredItems.containsAll(catalogItemIds);
+    }
+
     // ----------------------------------------------------------------
     // Helpers
     // ----------------------------------------------------------------

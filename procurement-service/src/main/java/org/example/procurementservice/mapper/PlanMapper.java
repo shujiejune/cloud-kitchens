@@ -9,6 +9,7 @@ import org.mapstruct.Mapping;
 public interface PlanMapper {
 
     @Mapping(target = "planId", source = "id")
+    @Mapping(target = "status", expression = "java(plan.getStatus() != null ? plan.getStatus().name() : \"READY\")")
     @Mapping(target = "items", source = "items", defaultExpression = "java(java.util.List.of())")
     @Mapping(target = "vendorSubtotals", source = "vendorSubtotals", defaultExpression = "java(java.util.List.of())")
     @Mapping(target = "vendorWarnings", source = "vendorWarnings", defaultExpression = "java(java.util.List.of())")

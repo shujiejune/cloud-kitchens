@@ -74,6 +74,16 @@ public class Plan {
     @Field("ttlExpiry")
     private Instant ttlExpiry;
 
+    /**
+     * PENDING: price-fetch event published to Kafka, optimizer not yet run.
+     * READY:   optimizer complete, all plan fields populated.
+     * FAILED:  consumer exhausted retries, vendor calls all failed.
+     */
+    @Field("status")
+    private PlanStatus status = PlanStatus.PENDING;
+
+    public enum PlanStatus { PENDING, READY, FAILED }
+
     // ----------------------------------------------------------------
     // Embedded: one line of the plan
     // ----------------------------------------------------------------
