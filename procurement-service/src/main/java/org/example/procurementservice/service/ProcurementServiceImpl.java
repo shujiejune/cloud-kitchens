@@ -270,7 +270,9 @@ public class ProcurementServiceImpl implements ProcurementService {
                                 + " — re-generate the plan with refreshPrices=true"));
 
         VendorProductResult best = snap.getResults().stream()
-                .filter(r -> Objects.equals(r.getUnitPrice(), snap.getBestPrice()))
+                .filter(r -> r.getUnitPrice() != null &&
+                        snap.getBestPrice() != null &&
+                        r.getUnitPrice().compareTo(snap.getBestPrice()) == 0)
                 .findFirst()
                 .orElse(snap.getResults().isEmpty() ? null : snap.getResults().get(0));
 
@@ -315,8 +317,7 @@ public class ProcurementServiceImpl implements ProcurementService {
         // Vendor is LAZY on OrderLineItem; force-init inside a transaction, and
         // collect line context for the response in the same pass.
         record LineCtx(Long lineItemId, Long vendorId, String vendorName,
-                       Long catalogItemId, java.math.BigDecimal quantity,
-                       java.math.BigDecimal lineTotal) {}
+                       Long catalogItemId, BigDecimal quantity, BigDecimal lineTotal) {}
 
         List<LineCtx> lineContexts = transactionTemplate.execute(s ->
                 lines.stream().map(li -> {
