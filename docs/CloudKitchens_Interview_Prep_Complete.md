@@ -417,7 +417,46 @@ Unit tests for reusable UI components (Autocomplete, Button, Spinner, ItemTable)
 
 **Root Cause**: MongoDB's TTL index background task runs every 60 seconds, so expired snapshots could persist briefly. More critically, the Kroger API was returning HTTP 200 with an empty body, which our deserialization treated as "no results" rather than an error. The system then fell back to the cached snapshot (past TTL but not yet physically deleted).
 
-**Fix**: Added an explicit staleness check in the Procurement Service — if the most recent snapshot's queriedAt is older than 5 minutes, force a re-fetch regardless of TTL. Added validation in the Kroger Feign client decoder: empty body throws a typed VendorEmptyResponseException (counted as a failure by the circuit breaker). Added a CloudWatch metric on cache hit vs. cache miss ratio to alert when abnormally high.
+**Short-term Fix** (~4–6 hours, deployable same day):
+
+Two targeted patches that stop the bleeding without restructuring anything:
+
+1. **Explicit staleness guard in `ProcurementService`** — before using any snapshot returned from MongoDB, compare its `queriedAt` against `Instant.now()`. If the gap exceeds a configurable threshold (default 5 minutes, controlled via `procurement.snapshot.max-age-seconds` in `config-repo/procurement-service.yml`), discard it and force a live Feign call regardless of the TTL field. This closes the 60-second reaper-lag window: even if MongoDB has not yet physically deleted the expired document, the application-level guard prevents it from being used.
+
+   ```java
+   // ProcurementService.java — inside getOrFetchSnapshot()
+   if (cached != null
+       && Duration.between(cached.getQueriedAt(), Instant.now()).getSeconds()
+          > maxAgeSeconds) {
+       cached = null;   // treat as cache miss; fall through to Feign call
+   }
+   ```
+
+2. **Strict empty-body validation in the Kroger Feign decoder** — add a custom `ErrorDecoder` (or `ResponseInterceptor`) for `KrogerClient` that inspects the response before deserialization. If the body is absent or the `results` array is empty, throw a typed `VendorEmptyResponseException`. Resilience4j's circuit breaker is already configured to count this exception family as a failure, so three consecutive empty responses will open the circuit and surface the issue on the next plan request rather than silently serving stale data.
+
+   ```java
+   // KrogerResponseDecoder.java
+   KrogerPriceResponse body = objectMapper.readValue(stream, KrogerPriceResponse.class);
+   if (body == null || body.getResults() == null || body.getResults().isEmpty()) {
+       throw new VendorEmptyResponseException("Kroger returned empty results for " + itemId);
+   }
+   ```
+
+Why this works short-term: it addresses both failure modes (TTL reaper lag and silent empty-body fallback) with surgical, low-risk changes — no schema migration, no new infrastructure. The existing Resilience4j and MongoDB stack is unchanged.
+
+**Long-term Fix** (~1–2 sprints):
+
+The short-term patches are band-aids on a deeper design gap: the system has no clear contract for what "a valid vendor response" means, and it relies on MongoDB's TTL reaper as its only cache-eviction mechanism. The durable fix closes both gaps:
+
+1. **Vendor response contract tests (Sprint 1, ~3 days)** — add Wiremock stubs for all three vendor clients (Amazon, Walmart, Kroger) that cover the full error surface: HTTP 200 with empty body, HTTP 200 with malformed JSON, HTTP 429, HTTP 500, and connection timeout. Run these in CI on every PR. This forces every future change to the Feign decoder to explicitly handle the empty-body case rather than discovering it in production.
+
+2. **Uniform empty-response policy across all vendors (Sprint 1, ~1 day)** — extend the `VendorEmptyResponseException` guard to `AmazonClient` and `WalmartClient` as well. Add a shared base decoder that the vendor-specific decoders extend, so the policy is defined once and inherited — not copy-pasted.
+
+3. **Application-level cache invalidation separate from TTL (Sprint 2, ~4 days)** — stop using MongoDB TTL as the primary freshness signal. Add an explicit `isValid` flag and a `staleBefore` timestamp to each `PriceSnapshot` document. When a `refreshPrices: true` plan request arrives, mark all existing snapshots for this operator as stale (bulk update) before fetching. This makes freshness a deliberate write, not a race against a background reaper, and allows targeted invalidation (e.g., invalidate only Kroger snapshots when the Kroger circuit opens).
+
+4. **Observability metric for cache-hit anomalies (Sprint 2, ~1 day)** — emit a Micrometer counter (`procurement.snapshot.cache_hit` vs `procurement.snapshot.cache_miss`) on every lookup. Wire a CloudWatch alarm that fires if the hit ratio exceeds 95% for more than 10 minutes — a sign that re-fetch is being silently skipped. This would have detected this incident before the operator noticed.
+
+Why this prevents the bug long-term: contract tests catch silent-empty-body regressions before they ship; the uniform policy means no vendor can silently degrade; explicit invalidation removes reliance on the 60-second reaper window entirely; and the alarm makes any future drift in cache behavior visible to the on-call engineer within minutes rather than days.
 
 ## Scenario 2: Order History List Slows Down as Order Volume Grows
 
